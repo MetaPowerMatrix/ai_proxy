@@ -88,6 +88,7 @@ def check_service_status(reference_audio_file):
                 minicpm_client.start_completions_listener(minicpm_completions_callback)
             else:
                 logger.error(f"MiniCPM服务状态检查失败: {response.status_code}")
+                return False
 
         else:
             # 检查聊天服务状态
@@ -97,12 +98,14 @@ def check_service_status(reference_audio_file):
                     logger.info(f"未审核聊天服务状态: {response.json()}")
                 else:
                     logger.error(f"未审核聊天服务状态检查失败: {response.status_code}")
+                    return False
             else:
                 response = requests.get(QWEN_CHAT_STATUS_URL)
                 if response.status_code == 200:
                     logger.info(f"Qwen聊天服务状态: {response.json()}")
                 else:
                     logger.error(f"Qwen聊天服务状态检查失败: {response.status_code}")
+                    return False
 
             # 检查语音转文字服务状态
             response = requests.get(SPEECH_TO_TEXT_STATUS_URL)
@@ -110,9 +113,13 @@ def check_service_status(reference_audio_file):
                 logger.info(f"语音转文字服务状态: {response.json()}")
             else:
                 logger.error(f"语音转文字服务状态检查失败: {response.status_code}")
+                return False
 
     except Exception as e:
         logger.error(f"服务状态检查失败: {e}")
+        return False
+
+    return True
 
 def speech_to_text(audio_path):
     """调用本地服务接口将语音转换为文本"""
@@ -391,6 +398,7 @@ def on_message(ws, message):
             # 从二进制数据中提取会话ID（前16字节）和音频数据
             if len(binary_data) > 16:
                 # 提取会话ID（UUID格式，存储在前16字节）
+                global session_id_bytes
                 session_id_bytes = binary_data[:16]
                 raw_audio = binary_data[16:]
                 
@@ -431,6 +439,7 @@ def on_message(ws, message):
         logger.error(f"处理消息时出错: {str(e)}, 出错行号: {line_number}")
 
 def start_websocket():
+    global ws
     """启动WebSocket连接"""
     ws = websocket.WebSocketApp(
         WS_URL,
@@ -524,7 +533,9 @@ def main():
     reference_audio_file = AUDIO_CATEGORIES.get(args.voice_category, AUDIO_CATEGORIES["御姐配音暧昧"])
 
     # 检查服务状态
-    check_service_status(reference_audio_file)
+    if not check_service_status(reference_audio_file):
+        logger.error("服务状态检查失败，请检查服务是否正常运行")
+        return
 
     # 打印启动信息
     logger.info("=" * 50)
@@ -543,6 +554,7 @@ def main():
     asyncio.run(start_websocket())
 
 def minicpm_completions_callback(audio_data, audio_length, text):
+    global ws, session_id_bytes
     """音频回调函数示例"""
     print(f"Mnicpm音频处理: {audio_length} bytes")
     try:
