@@ -13,6 +13,10 @@ from pydub import AudioSegment
 import random
 import websocket
 import time
+from minicpm_client import MiniCPMClient
+import base64
+import io
+
 
 # 加载.env文件中的环境变量
 load_dotenv()
@@ -32,19 +36,16 @@ WS_URL = os.getenv("WS_URL", "ws://stream.kalaisai.com:80/ws/proxy")
 
 # 本地服务接口URL
 API_URL = "http://127.0.0.1:8000/api/v1"
-TTS_API_URL = "http://127.0.0.1:5000/process"
 SPEECH_TO_TEXT_URL = f"{API_URL}/speech-to-text"
-CHAT_URL = f"{API_URL}/chat"
+MEGATTS_URL = f"http://127.0.0.1:5000/process"
+F5TTS_URL = f"http://127.0.0.1:7860/"
+
 QWEN_CHAT_URL = f"{API_URL}/chat/qwen"
-MINICPM_URL = f"{API_URL}/voice-chat"
-TEXT_TO_SPEECH_URL = f"{TTS_API_URL}"
 UNCENSORED_CHAT_URL = f"{API_URL}/chat/uncensored"
 
 # 状态接口URL
 SPEECH_TO_TEXT_STATUS_URL = f"{API_URL}/speech-to-text/status"
-CHAT_STATUS_URL = f"{API_URL}/chat/status"
 MEGATTS_STATUS_URL = f"{API_URL}/megatts/status"
-MINICPM_STATUS_URL = f"{API_URL}/minicpm/status"
 QWEN_CHAT_STATUS_URL = f"{API_URL}/qwen/status"
 UNCENSORED_CHAT_STATUS_URL = f"{API_URL}/uncensored/status"
 
@@ -56,7 +57,6 @@ AUDIO_CATEGORIES = {}
 
 # 全局配置变量
 USE_MINICPM = False
-USE_QWEN = False
 SKIP_TTS = False
 USE_F5TTS = False
 USE_UNCENSORED = False
@@ -75,25 +75,22 @@ def setup_directories():
     os.makedirs(PROCESSED_DIR, exist_ok=True)
     logger.info(f"已创建目录: {AUDIO_DIR}, {PROCESSED_DIR}")
 
-def check_service_status():
+def check_service_status(reference_audio_file):
     """检查本地服务接口的状态"""
     try:
         # 检查MiniCPM服务状态
         if USE_MINICPM:
-            response = requests.get(MINICPM_STATUS_URL)
+            minicpm_client = MiniCPMClient()
+            response = minicpm_client.check_service_status()
             if response.status_code == 200:
                 logger.info(f"MiniCPM服务状态: {response.json()}")
+                minicpm_client.init_with_chinese_voice(reference_audio_file)
+                minicpm_client.start_completions_listener(minicpm_completions_callback)
             else:
                 logger.error(f"MiniCPM服务状态检查失败: {response.status_code}")
 
-        if not USE_MINICPM:
+        else:
             # 检查聊天服务状态
-            if USE_QWEN:
-                response = requests.get(QWEN_CHAT_STATUS_URL)
-                if response.status_code == 200:
-                    logger.info(f"Qwen聊天服务状态: {response.json()}")
-                else:
-                    logger.error(f"Qwen聊天服务状态检查失败: {response.status_code}")
             if USE_UNCENSORED:
                 response = requests.get(UNCENSORED_CHAT_STATUS_URL)
                 if response.status_code == 200:
@@ -101,11 +98,11 @@ def check_service_status():
                 else:
                     logger.error(f"未审核聊天服务状态检查失败: {response.status_code}")
             else:
-                response = requests.get(CHAT_STATUS_URL)
+                response = requests.get(QWEN_CHAT_STATUS_URL)
                 if response.status_code == 200:
-                    logger.info(f"Deepseek聊天服务状态: {response.json()}")
+                    logger.info(f"Qwen聊天服务状态: {response.json()}")
                 else:
-                    logger.error(f"Deepseek聊天服务状态检查失败: {response.status_code}")
+                    logger.error(f"Qwen聊天服务状态检查失败: {response.status_code}")
 
             # 检查语音转文字服务状态
             response = requests.get(SPEECH_TO_TEXT_STATUS_URL)
@@ -175,16 +172,8 @@ def get_chat_response(prompt):
     """调用聊天接口获取回复，根据配置选择Qwen或Deepseek"""
     global conversation_history
     
-    # 确定要使用的URL
-    if USE_UNCENSORED:
-        url = UNCENSORED_CHAT_URL
-    elif USE_QWEN:
-        url = QWEN_CHAT_URL
-    else:
-        url = CHAT_URL
-
-    model_name = "Qwen" if USE_QWEN else "Deepseek"
-    model_name = "Uncensored" if USE_UNCENSORED else model_name
+    model_name = "Uncensored" if USE_UNCENSORED else "Qwen"
+    url = UNCENSORED_CHAT_URL if USE_UNCENSORED else QWEN_CHAT_URL
 
     try:
         data = {
@@ -230,7 +219,7 @@ def text_to_speech(text, reference_audio_file):
             "output_dir": "/data/MegaTTS3/output",
         }
         
-        response = requests.post(TEXT_TO_SPEECH_URL, json=data)
+        response = requests.post(MEGATTS_URL, json=data)
         
         logger.info(f"收到响应: 状态码={response.status_code}")
         
@@ -261,50 +250,8 @@ def text_to_speech(text, reference_audio_file):
         logger.error(f"异常堆栈: {traceback.format_exc()}")
         return None
 
-async def select_voice_category(ai_response):
-    """调用chat接口，选择最适合回复的语音分类"""
-    try:
-        # 获取所有可用的分类名称（文件名）
-        available_categories = list(AUDIO_CATEGORIES.keys())
-        categories_info = ", ".join(available_categories)
-        
-        prompt = (
-            f"请为以下回复选择最适合的语音分类。以下是可用的语音分类名称：\n"
-            f"{categories_info}\n"
-            f"回复内容：\n{ai_response}\n"
-            f"请根据回复内容的情感、语气和上下文，选择一个最适合的语音分类名称。"
-        )
-        
-        # 构造请求数据
-        data = {
-            "prompt": prompt,
-            "history": conversation_history,
-            "max_length": 2048,
-            "temperature": 0.7,
-            "top_p": 0.9
-        }
-        
-        # 调用chat接口
-        response = requests.post(CHAT_URL, json=data)
-        if response.status_code == 200:
-            result = response.json()
-            selected_category = result.get("response", "").strip()
-            
-            # 检查选择的分类是否有效
-            if selected_category in AUDIO_CATEGORIES:
-                return selected_category
-            else:
-                logger.warning(f"选择的语音分类无效: {selected_category}")
-                return available_categories[0] if available_categories else None
-        else:
-            logger.error(f"chat接口调用失败: {response.status_code}")
-            return None
-    except Exception as e:
-        logger.error(f"选择语音分类时出错: {e}")
-        return None
 
 def use_f5tts(text, reference_audio_file):
-    """调用f5tts接口将文本转换为语音"""
     from gradio_client import Client, handle_file
 
     # 读取reference_audio_file同名的txt文件，如果文件不存在，则使用空字符串
@@ -315,7 +262,7 @@ def use_f5tts(text, reference_audio_file):
     else:
         reference_text = ""
 
-    client = Client("http://127.0.0.1:7860/")
+    client = Client(F5TTS_URL)
     output_audio_path, _, _, _ = client.predict(
             ref_audio_input=handle_file(reference_audio_file),
             ref_text_input=reference_text,
@@ -360,36 +307,11 @@ def process_audio(raw_audio_data, session_id):
         # MiniCPM模式：直接将音频发送给MiniCPM处理
         if USE_MINICPM:
             logger.info("使用MiniCPM模式处理音频...")
-            # reference_audio_file = AUDIO_CATEGORIES["御姐配音暧昧"]
-            output_audio_path = os.path.join(AUDIO_DIR, f"audio_output_{session_id}_{timestamp}.wav")
-            text_response, audio_response, error = call_minicpm(wav_file_path, reference_audio_file, output_audio_path, session_id)
-            
-            if error:
-                logger.error(f"MiniCPM处理失败: {error}")
-                return None, f"MiniCPM处理失败: {error}"
-                
-            # 如果MiniCPM已经生成了音频，直接返回
-            if audio_response:
-                logger.info("使用MiniCPM生成的音频回复")
-                return audio_response, text_response
-            else:
-                logger.info("正在生成语音回复...")
-                if USE_F5TTS:
-                    audio_response = use_f5tts(text_response, reference_audio_file)
-                else:
-                    audio_response = text_to_speech(text_response, reference_audio_file)
-                
-                # 如果成功生成语音
-                if audio_response:
-                    logger.info(f"已生成语音回复: {len(audio_response)} 字节")
-                    return audio_response, text_response
-                
-                logger.warning("语音合成失败")
-                return None, text_response
-        
+            call_minicpm(wav_file_path)
+            return None, None
+
         # 常规模式：语音转文字 -> 聊天 -> 文字转语音
         else:
-            # 转录音频
             logger.info("开始语音识别...")
             transcript = speech_to_text(wav_file_path)
             if not transcript:
@@ -460,13 +382,10 @@ def on_message(ws, message):
     """处理接收到的消息"""
     try:
         # 判断消息类型 - 文本还是二进制
-        # print(f"收到消息: {message}")
         if isinstance(message, str):
-            # 文本消息 - 可能是控制命令
             pass
 
         elif isinstance(message, bytes):
-            # 直接处理二进制数据（音频）
             binary_data = message
             
             # 从二进制数据中提取会话ID（前16字节）和音频数据
@@ -480,22 +399,7 @@ def on_message(ws, message):
                     session_id = uuid.UUID(bytes=session_id_bytes).hex
                     logger.info(f"收到音频数据: 会话ID = {session_id}, 大小 = {len(raw_audio)} 字节")
                     
-                    # 发送处理状态
-                    # ws.send(json.dumps({
-                    #     "type": "text",
-                    #     "session_id": session_id,
-                    #     "content": "正在处理音频..."
-                    # }))
-                    
-                    # 处理音频数据
                     audio_response, text_response = process_audio(raw_audio, session_id)
-                    
-                    # # 发送文本回复
-                    # ws.send(json.dumps({
-                    #     "type": "text",
-                    #     "session_id": session_id,
-                    #     "content": text_response
-                    # }))
                     
                     # 发送音频回复 - 分块发送
                     if audio_response:
@@ -525,6 +429,157 @@ def on_message(ws, message):
         exc_type, exc_obj, exc_tb = sys.exc_info()
         line_number = exc_tb.tb_lineno
         logger.error(f"处理消息时出错: {str(e)}, 出错行号: {line_number}")
+
+def start_websocket():
+    """启动WebSocket连接"""
+    ws = websocket.WebSocketApp(
+        WS_URL,
+        on_message=on_message,
+        on_error=on_error,
+        on_close=on_close,
+        on_ping=on_ping,
+        on_pong=on_pong
+    )
+    ws.on_open = on_open
+    
+    # 启动心跳线程
+    heartbeat_thread = start_heartbeat(ws)
+    
+    # 设置WebSocket选项
+    ws.run_forever(
+        ping_interval=None,
+        ping_timeout=None,
+    )
+    
+    # 等待心跳线程结束
+    if heartbeat_thread:
+        heartbeat_thread.join()
+            
+def initialize_audio_categories():
+    """初始化音频分类"""
+    global AUDIO_CATEGORIES
+    voice_cat_file = Path("voice_cat.json")
+    
+    if voice_cat_file.exists():
+        # 如果voice_cat.json文件存在，直接加载分类信息
+        with open(voice_cat_file, "r", encoding="utf-8") as f:
+            AUDIO_CATEGORIES = json.load(f)
+        logger.info("已从voice_cat.json加载音频分类信息")
+    else:
+        # 如果voice_cat.json文件不存在，读取音频文件并生成分类信息
+        assets_dir = Path("/data/MegaTTS3/assets")
+        male_dir = assets_dir / "男"
+        female_dir = assets_dir / "女"
+        
+        AUDIO_CATEGORIES = {}
+        
+        # 处理"男"目录下的音频文件
+        if male_dir.exists() and male_dir.is_dir():
+            for file_path in male_dir.glob("*.wav"):
+                file_name = file_path.stem  # 获取文件名（不含扩展名）
+                AUDIO_CATEGORIES[file_name] = str(file_path)
+        
+        # 处理"女"目录下的音频文件
+        if female_dir.exists() and female_dir.is_dir():
+            for file_path in female_dir.glob("*.wav"):
+                file_name = file_path.stem  # 获取文件名（不含扩展名）
+                AUDIO_CATEGORIES[file_name] = str(file_path)
+        
+        # 将分类信息保存到voice_cat.json文件
+        with open(voice_cat_file, "w", encoding="utf-8") as f:
+            json.dump(AUDIO_CATEGORIES, f, ensure_ascii=False, indent=4)
+        logger.info("已生成并保存音频分类信息到voice_cat.json")
+
+def main():
+    # 参数解析
+    parser = argparse.ArgumentParser(description="AI音频处理客户端")
+    parser.add_argument("--use-minicpm", action="store_true", 
+                      help="使用MiniCPM大模型进行语音处理")
+    parser.add_argument("--skip-tts", action="store_true", 
+                      help="跳过文本转语音步骤")
+    parser.add_argument("--use-f5tts", action="store_true", 
+                      help="使用f5tts接口进行语音处理")
+    parser.add_argument("--use-uncensored", action="store_true", 
+                      help="使用不审查聊天接口")
+    parser.add_argument("--voice-category", type=str, default="御姐配音暧昧",
+                      help="指定音色名称，默认为'御姐配音暧昧'")
+    
+    args = parser.parse_args()
+    
+    # 设置全局配置
+    global USE_MINICPM, SKIP_TTS, USE_F5TTS, AUDIO_DIR, PROCESSED_DIR, USE_UNCENSORED
+    USE_MINICPM = args.use_minicpm
+    SKIP_TTS = args.skip_tts
+    USE_F5TTS = args.use_f5tts
+    USE_UNCENSORED = args.use_uncensored
+
+    # 创建必要的目录
+    setup_directories()
+    
+    # 初始化音频分类
+    initialize_audio_categories()
+        
+    # 设置音色名称
+    global reference_audio_file
+    reference_audio_file = AUDIO_CATEGORIES.get(args.voice_category, AUDIO_CATEGORIES["御姐配音暧昧"])
+
+    # 检查服务状态
+    check_service_status(reference_audio_file)
+
+    # 打印启动信息
+    logger.info("=" * 50)
+    logger.info("AI音频处理客户端启动")
+    logger.info(f"WebSocket URL: {WS_URL}")
+    logger.info(f"音频文件目录: {AUDIO_DIR}")
+    logger.info(f"处理文件目录: {PROCESSED_DIR}")
+    logger.info(f"使用MiniCPM: {USE_MINICPM}")
+    logger.info(f"使用f5tts: {USE_F5TTS}")
+    logger.info(f"使用不审查聊天接口: {USE_UNCENSORED}")
+    logger.info(f"跳过TTS: {SKIP_TTS}")
+    logger.info(f"音色名称: {args.voice_category}")
+    logger.info("=" * 50)
+    
+    # 启动异步循环
+    asyncio.run(start_websocket())
+
+def minicpm_completions_callback(audio_data, audio_length, text):
+    """音频回调函数示例"""
+    print(f"Mnicpm音频处理: {audio_length} bytes")
+    try:
+        if text:
+            with open("received_text.log", "a", encoding="utf-8") as f:
+                f.write(f"{time.time()}: {text}\n")
+        elif audio_data:
+            # 将base64音频数据解码并保存
+            audio_bytes = base64.b64decode(audio_data)
+            audio = AudioSegment.from_file(io.BytesIO(audio_bytes))
+            audio_data = audio.raw_data
+            send_audio_chunk(ws, session_id_bytes, audio_data)
+        else:
+            print("没有音频数据")
+    except Exception as e:
+        print(f"保存音频错误: {e}")
+
+def call_minicpm(audio_path):
+    try:
+        logger.info(f"开始调用MiniCPM处理音频: {audio_path}")
+        
+        # 检查文件是否存在
+        if not os.path.exists(audio_path):
+            logger.error(f"音频文件不存在: {audio_path}")
+            return None, None, "音频文件不存在"
+        
+        # 获取全路径
+        audio_path = os.path.abspath(audio_path)
+
+        minicpm_client = MiniCPMClient()
+        audio_base64 = minicpm_client.load_audio_file(audio_path)
+        minicpm_client.send_audio_stream(audio_base64)
+
+    except Exception as e:
+        logger.error(f"调用MiniCPM时出错: {str(e)}")
+        import traceback
+        logger.error(f"异常堆栈: {traceback.format_exc()}")
 
 def send_heartbeat(ws):
     """发送心跳包保持连接活跃"""
@@ -595,188 +650,6 @@ def on_ping(wsapp, message):
 def on_pong(wsapp, message):
     print("Got a pong! No need to respond")
 
-def start_websocket():
-    """启动WebSocket连接"""
-    ws = websocket.WebSocketApp(
-        WS_URL,
-        on_message=on_message,
-        on_error=on_error,
-        on_close=on_close,
-        on_ping=on_ping,
-        on_pong=on_pong
-    )
-    ws.on_open = on_open
-    
-    # 启动心跳线程
-    heartbeat_thread = start_heartbeat(ws)
-    
-    # 设置WebSocket选项
-    ws.run_forever(
-        ping_interval=None,
-        ping_timeout=None,
-    )
-    
-    # 等待心跳线程结束
-    if heartbeat_thread:
-        heartbeat_thread.join()
-            
-def ai_backend_client():
-    """AI后端客户端"""
-    logger.info("启动WebSocket客户端")
-    start_websocket()
-
-def initialize_audio_categories():
-    """初始化音频分类"""
-    global AUDIO_CATEGORIES
-    voice_cat_file = Path("voice_cat.json")
-    
-    if voice_cat_file.exists():
-        # 如果voice_cat.json文件存在，直接加载分类信息
-        with open(voice_cat_file, "r", encoding="utf-8") as f:
-            AUDIO_CATEGORIES = json.load(f)
-        logger.info("已从voice_cat.json加载音频分类信息")
-    else:
-        # 如果voice_cat.json文件不存在，读取音频文件并生成分类信息
-        assets_dir = Path("/data/MegaTTS3/assets")
-        male_dir = assets_dir / "男"
-        female_dir = assets_dir / "女"
-        
-        AUDIO_CATEGORIES = {}
-        
-        # 处理"男"目录下的音频文件
-        if male_dir.exists() and male_dir.is_dir():
-            for file_path in male_dir.glob("*.wav"):
-                file_name = file_path.stem  # 获取文件名（不含扩展名）
-                AUDIO_CATEGORIES[file_name] = str(file_path)
-        
-        # 处理"女"目录下的音频文件
-        if female_dir.exists() and female_dir.is_dir():
-            for file_path in female_dir.glob("*.wav"):
-                file_name = file_path.stem  # 获取文件名（不含扩展名）
-                AUDIO_CATEGORIES[file_name] = str(file_path)
-        
-        # 将分类信息保存到voice_cat.json文件
-        with open(voice_cat_file, "w", encoding="utf-8") as f:
-            json.dump(AUDIO_CATEGORIES, f, ensure_ascii=False, indent=4)
-        logger.info("已生成并保存音频分类信息到voice_cat.json")
-
-def main():
-    # 参数解析
-    parser = argparse.ArgumentParser(description="AI音频处理客户端")
-    parser.add_argument("--use-minicpm", action="store_true", 
-                      help="使用MiniCPM大模型进行语音处理")
-    parser.add_argument("--use-qwen", action="store_true", 
-                      help="使用Qwen聊天接口，而不是默认的Deepseek")
-    parser.add_argument("--skip-tts", action="store_true", 
-                      help="跳过文本转语音步骤")
-    parser.add_argument("--use-f5tts", action="store_true", 
-                      help="使用f5tts接口进行语音处理")
-    parser.add_argument("--use-uncensored", action="store_true", 
-                      help="使用不审查聊天接口")
-    parser.add_argument("--voice-category", type=str, default="御姐配音暧昧",
-                      help="指定音色名称，默认为'御姐配音暧昧'")
-    
-    args = parser.parse_args()
-    
-    # 设置全局配置
-    global USE_MINICPM, USE_QWEN, SKIP_TTS, USE_F5TTS, AUDIO_DIR, PROCESSED_DIR, USE_UNCENSORED
-    USE_MINICPM = args.use_minicpm
-    USE_QWEN = args.use_qwen
-    SKIP_TTS = args.skip_tts
-    USE_F5TTS = args.use_f5tts
-    USE_UNCENSORED = args.use_uncensored
-
-    # 创建必要的目录
-    setup_directories()
-    
-    # 初始化音频分类
-    initialize_audio_categories()
-    
-    # 检查服务状态
-    check_service_status()
-    
-    # 设置音色名称
-    global reference_audio_file
-    reference_audio_file = AUDIO_CATEGORIES.get(args.voice_category, AUDIO_CATEGORIES["御姐配音暧昧"])
-
-    # 打印启动信息
-    logger.info("=" * 50)
-    logger.info("AI音频处理客户端启动")
-    logger.info(f"WebSocket URL: {WS_URL}")
-    logger.info(f"音频文件目录: {AUDIO_DIR}")
-    logger.info(f"处理文件目录: {PROCESSED_DIR}")
-    logger.info(f"使用MiniCPM: {USE_MINICPM}")
-    logger.info(f"使用Qwen: {USE_QWEN}")
-    logger.info(f"使用f5tts: {USE_F5TTS}")
-    logger.info(f"使用不审查聊天接口: {USE_UNCENSORED}")
-    logger.info(f"跳过TTS: {SKIP_TTS}")
-    logger.info(f"音色名称: {args.voice_category}")
-    logger.info("=" * 50)
-    
-    # 启动异步循环
-    asyncio.run(ai_backend_client())
-
-# 添加调用MiniCPM的函数
-def call_minicpm(audio_path, reference_audio_file, output_audio_path, session_id):
-    """调用MiniCPM处理音频文件，直接返回文本回复和可选的音频回复"""
-    try:
-        logger.info(f"开始调用MiniCPM处理音频: {audio_path}")
-        
-        # 检查文件是否存在
-        if not os.path.exists(audio_path):
-            logger.error(f"音频文件不存在: {audio_path}")
-            return None, None, "音频文件不存在"
-        # 获取全路径
-        audio_path = os.path.abspath(audio_path)
-        output_audio_path = os.path.abspath(output_audio_path)
-
-        # 读取音频文件
-        headers = {
-            'Accept': 'application/json',
-            'Content-Type': 'application/json'
-        }
-        data = {
-            "audio_input": audio_path,
-            "ref_audio": reference_audio_file,
-            "output_audio_path": output_audio_path,
-            "session_id": session_id
-        }
-        
-        logger.info(f"发送请求到MiniCPM: {MINICPM_URL}")
-        
-        response = requests.post(MINICPM_URL, headers=headers, json=data)
-
-        logger.info(f"收到MiniCPM响应: 状态码={response.status_code}")
-        
-        if response.status_code == 200:
-            result = response.json()
-            
-            if result.get("code") == 0:
-                text_response = result.get("data", {}).get("text", "")
-                output_audio_file_path = result.get("data", {}).get("output_audio_path", "")
-                
-                logger.info(f"MiniCPM处理成功，文本回复: {text_response[:50]}...")
-                logger.info(f"MiniCPM生成的音频文件: {output_audio_file_path}")
-                
-                # 如果有音频文件，读取它
-                audio_response = None
-                if output_audio_file_path and os.path.exists(output_audio_file_path):
-                    audio = AudioSegment.from_file(output_audio_file_path, format="wav")
-                    audio_response = audio.raw_data
-                
-                return text_response, audio_response, None
-            else:
-                error_msg = result.get("message", "MiniCPM处理失败")
-                logger.error(f"MiniCPM返回错误: {error_msg}")
-                return None, None, error_msg
-        else:
-            logger.error(f"MiniCPM请求失败: 状态码={response.status_code}, 响应内容={response.text}")
-            return None, None, f"MiniCPM请求失败: {response.status_code}"
-    except Exception as e:
-        logger.error(f"调用MiniCPM时出错: {str(e)}")
-        import traceback
-        logger.error(f"异常堆栈: {traceback.format_exc()}")
-        return None, None, f"调用MiniCPM时出错: {str(e)}"
 
 if __name__ == "__main__":
     main()
