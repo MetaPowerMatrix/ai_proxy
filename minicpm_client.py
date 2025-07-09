@@ -105,7 +105,7 @@ class MiniCPMClient:
     def load_audio_file(self, file_path):
         """加载音频文件并转换为base64"""
         with open(file_path, "rb") as f:
-            audio_data = base64.b64encode(f.read()).decode()
+            audio_data = base64.b64encode(f.read()).decode('utf-8')
         return audio_data
         
     def check_service_status(self):
