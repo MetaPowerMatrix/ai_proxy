@@ -63,7 +63,7 @@ class MiniCPMClient:
         return response.json()
 
 
-    def start_completions_listener(self, completions_callback=None):
+    def start_completions_listener(self, ws, session_id, completions_callback=None):
         """启动completions接口监听
         
         Args:
@@ -95,7 +95,7 @@ class MiniCPMClient:
                                 if audio:
                                     if completions_callback:
                                         try:
-                                            completions_callback(audio, len(audio), None)
+                                            completions_callback(audio, len(audio), None, ws, session_id)
                                         except Exception as e:
                                             print(f"音频回调函数错误: {e}")
                                     else:
@@ -105,7 +105,7 @@ class MiniCPMClient:
                                 if text and text != '\n<end>':
                                     if completions_callback:
                                         try:
-                                            completions_callback(None, None, text)
+                                            completions_callback(None, None, text, ws, session_id)
                                         except Exception as e:
                                             print(f"文本回调函数错误: {e}")
                                     else:

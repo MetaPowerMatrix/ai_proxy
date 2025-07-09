@@ -85,7 +85,6 @@ def check_service_status(reference_audio_file):
             if response.status_code == 200:
                 logger.info(f"MiniCPM服务状态: {response.json()}")
                 minicpm_client.init_with_chinese_voice(reference_audio_file)
-                minicpm_client.start_completions_listener(minicpm_completions_callback)
             else:
                 logger.error(f"MiniCPM服务状态检查失败: {response.status_code}")
                 return False
@@ -294,7 +293,7 @@ def use_f5tts(text, reference_audio_file):
         return None
 
 
-def process_audio(raw_audio_data, session_id):
+def process_audio(raw_audio_data, session_id, ws):
     """处理音频数据的完整流程，支持选择不同的处理模式"""
     global reference_audio_file
     
@@ -314,7 +313,8 @@ def process_audio(raw_audio_data, session_id):
         # MiniCPM模式：直接将音频发送给MiniCPM处理
         if USE_MINICPM:
             logger.info("使用MiniCPM模式处理音频...")
-            call_minicpm(wav_file_path)
+            call_minicpm(wav_file_path, ws, session_id)
+
             return None, None
 
         # 常规模式：语音转文字 -> 聊天 -> 文字转语音
@@ -407,7 +407,7 @@ def on_message(ws, message):
                     session_id = uuid.UUID(bytes=session_id_bytes).hex
                     logger.info(f"收到音频数据: 会话ID = {session_id}, 大小 = {len(raw_audio)} 字节")
                     
-                    audio_response, text_response = process_audio(raw_audio, session_id)
+                    audio_response, text_response = process_audio(raw_audio, session_id, ws)
                     
                     # 发送音频回复 - 分块发送
                     if audio_response:
@@ -553,8 +553,7 @@ def main():
     # 启动异步循环
     asyncio.run(start_websocket())
 
-def minicpm_completions_callback(audio_data, audio_length, text):
-    global ws, session_id_bytes
+def minicpm_completions_callback(audio_data, audio_length, text, ws, session_id):
     """音频回调函数示例"""
     print(f"Mnicpm音频处理: {audio_length} bytes")
     try:
@@ -566,13 +565,13 @@ def minicpm_completions_callback(audio_data, audio_length, text):
             audio_bytes = base64.b64decode(audio_data)
             audio = AudioSegment.from_file(io.BytesIO(audio_bytes))
             audio_data = audio.raw_data
-            send_audio_chunk(ws, session_id_bytes, audio_data)
+            send_audio_chunk(ws, session_id, audio_data)
         else:
             print("没有音频数据")
     except Exception as e:
         print(f"保存音频错误: {e}")
 
-def call_minicpm(audio_path):
+def call_minicpm(audio_path, ws, session_id):
     try:
         logger.info(f"开始调用MiniCPM处理音频: {audio_path}")
         
@@ -587,6 +586,7 @@ def call_minicpm(audio_path):
         minicpm_client = MiniCPMClient()
         audio_base64 = minicpm_client.load_audio_file(audio_path)
         minicpm_client.send_audio_stream(audio_base64)
+        minicpm_client.start_completions_listener(ws, session_id, minicpm_completions_callback)
 
     except Exception as e:
         logger.error(f"调用MiniCPM时出错: {str(e)}")
