@@ -76,6 +76,7 @@ def setup_directories():
     logger.info(f"已创建目录: {AUDIO_DIR}, {PROCESSED_DIR}")
 
 def check_service_status(reference_audio_file):
+    global minicpm_client
     """检查本地服务接口的状态"""
     try:
         # 检查MiniCPM服务状态
@@ -312,8 +313,8 @@ def process_audio(raw_audio_data, session_id):
         
         # MiniCPM模式：直接将音频发送给MiniCPM处理
         if USE_MINICPM:
+            global minicpm_client
             logger.info("使用MiniCPM模式处理音频...")
-            minicpm_client = MiniCPMClient()
             audio_resp, txt_resp = minicpm_client.stream_audio_processing(wav_file_path)
             return audio_resp, txt_resp
 
