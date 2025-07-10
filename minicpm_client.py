@@ -210,7 +210,6 @@ class MiniCPMClient:
 
             # 2. 发送completions请求获取生成的音频
             response = self.send_completions_request()
-            print(f"completions response 1: {response.status_code}")
         
             return response
         
@@ -224,41 +223,105 @@ class MiniCPMClient:
         audio_base64 = self.load_audio_file(wav_file_path)
         response = self.send_audio_request(audio_data=audio_base64)
         
-        print(f"completions response 2: {response.status_code}")
+        print(f"completions response: {response}")
         if response and response.status_code == 200:
+            # 检查响应头
+            print(f"响应头: {dict(response.headers)}")
+            print(f"内容类型: {response.headers.get('content-type', 'unknown')}")
+            
             # 实时处理每个音频片段
             try:
-                client_sse = SSEClient(response)
-                
-                for event in client_sse.events():
-                    if event.data:
-                        try:
-                            data = json.loads(event.data)
-                            # 获取音频数据
-                            if 'choices' in data and data['choices']:
-                                choice = data['choices'][0] if isinstance(data['choices'], list) else data['choices']
-                                
-                                if 'audio' in choice and choice['audio']:
-                                    audio_base64 = choice['audio']
-                                    audio_chunks.append(base64_to_pcm(audio_base64))
-                                    print(f"收到音频片段，长度: {len(audio_base64)}")
-                                
-                                if 'text' in choice and choice['text']:
-                                    text = choice['text'].replace('<end>', '')
-                                    text_parts.append(text)
-                                    print(f"收到文本: {text}")
+                # 方法1: 使用SSEClient
+                try:
+                    client_sse = SSEClient(response)
+                    print("使用SSEClient处理流数据...")
+                    
+                    for event in client_sse.events():
+                        if event.data and event.data.strip():
+                            print(f"收到SSE事件: {event.event}, 数据长度: {len(event.data)}")
+                            try:
+                                data = json.loads(event.data)
+                                self._process_sse_data(data, audio_chunks, text_parts)
                                     
-                                    # 检查是否结束
-                                    if '<end>' in choice['text']:
-                                        print("收到结束标记")
-                                        break
-                                    
-                        except json.JSONDecodeError:
-                            continue
+                            except json.JSONDecodeError as e:
+                                print(f"JSON解析失败: {e}, 原始数据: {event.data[:100]}...")
+                                continue
+                                
+                except Exception as sse_error:
+                    print(f"SSEClient处理失败: {sse_error}")
+                    print("切换到手动流处理...")
+                    
+                    # 方法2: 手动处理流数据
+                    self._manual_stream_processing(response, audio_chunks, text_parts)
                             
             except Exception as e:
                 print(f"流处理错误: {e}")
+                import traceback
+                traceback.print_exc()
                 return None, None
+        else:
+            print(f"请求失败或响应无效: {response}")
+            if response:
+                print(f"响应状态: {response.status_code}")
+                print(f"响应文本: {response.text[:200]}...")
         
         return audio_chunks, ''.join(text_parts)
+    
+    def _process_sse_data(self, data, audio_chunks, text_parts):
+        """处理SSE数据"""
+        if 'choices' in data and data['choices']:
+            choice = data['choices'][0] if isinstance(data['choices'], list) else data['choices']
+            
+            if 'audio' in choice and choice['audio']:
+                audio_base64 = choice['audio']
+                pcm_data = base64_to_pcm(audio_base64)
+                if pcm_data[0] is not None:  # 检查解析是否成功
+                    audio_chunks.append(pcm_data)
+                    print(f"收到音频片段，长度: {len(audio_base64)}")
+            
+            if 'text' in choice and choice['text']:
+                text = choice['text'].replace('<end>', '')
+                text_parts.append(text)
+                print(f"收到文本: {text}")
+                
+                # 检查是否结束
+                if '<end>' in choice['text']:
+                    print("收到结束标记")
+                    return True  # 表示结束
+        return False
+    
+    def _manual_stream_processing(self, response, audio_chunks, text_parts):
+        """手动处理流数据，当SSEClient失败时使用"""
+        print("开始手动处理流数据...")
+        
+        buffer = ""
+        for chunk in response.iter_content(chunk_size=1024, decode_unicode=True):
+            if chunk:
+                buffer += chunk
+                
+                # 处理完整的SSE事件
+                while "\n\n" in buffer:
+                    event_data, buffer = buffer.split("\n\n", 1)
+                    
+                    # 解析SSE事件
+                    lines = event_data.strip().split('\n')
+                    data_line = None
+                    
+                    for line in lines:
+                        if line.startswith('data: '):
+                            data_line = line[6:]  # 移除 'data: ' 前缀
+                            break
+                    
+                    if data_line and data_line.strip() and data_line != '[DONE]':
+                        try:
+                            data = json.loads(data_line)
+                            print(f"手动解析到数据: {type(data)}")
+                            
+                            if self._process_sse_data(data, audio_chunks, text_parts):
+                                print("手动处理完成，收到结束标记")
+                                return
+                                
+                        except json.JSONDecodeError as e:
+                            print(f"手动解析JSON失败: {e}, 数据: {data_line[:100]}...")
+                            continue
     
