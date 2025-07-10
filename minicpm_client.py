@@ -194,6 +194,7 @@ class MiniCPMClient:
             headers=headers,
             json={"prompt": ""}  # 可以为空，因为音频已通过stream发送
         )
+        print(f"completions response 1: {response.status_code}")
         
         return response
 
@@ -204,7 +205,7 @@ class MiniCPMClient:
         audio_base64 = self.load_audio_file(wav_file_path)
         response = self.send_audio_request(audio_data=audio_base64)
         
-        print(f"completions response: {response.status_code}")
+        print(f"completions response 2: {response.status_code}")
         if response.status_code == 200:
             # 实时处理每个音频片段
             try:
