@@ -216,7 +216,8 @@ class MiniCPMClient:
 
             # 2. 发送completions请求获取生成的音频
             response = self.send_completions_request()
-        
+            print(f"completions response 1: {response.json()}")
+
             return response
         
         return None
@@ -229,7 +230,7 @@ class MiniCPMClient:
         audio_base64 = self.load_audio_file(wav_file_path)
         response = self.send_audio_request(audio_data=audio_base64)
         
-        print(f"completions response: {response.json()}")
+        print(f"completions response 2: {response.json()}")
         if response and response.status_code == 200:
             # 检查响应头
             print(f"响应头: {dict(response.headers)}")
