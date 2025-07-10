@@ -149,6 +149,26 @@ class MiniCPMClient:
         )
 
         return response.json()
+
+    def send_completions_request(self) -> requests.Response:
+        """发送completions请求获取SSE流"""
+        headers = {
+            "uid": self.uid,
+            "Accept": "text/event-stream",
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive"
+        }
+        
+        # 关键：设置stream=True和适当的超时
+        response = requests.post(
+            f"{self.base_url}/api/v1/completions",
+            headers=headers,
+            json={"prompt": ""},
+            stream=True,  # 重要：必须设置为True
+            timeout=(30, 300)  # (连接超时, 读取超时)
+        )
+        
+        return response
     
     def send_audio_request(self, audio_data=None, image_data=None):
         """发送音频请求到MiniCPM-o服务器"""
@@ -186,17 +206,16 @@ class MiniCPMClient:
                 json=stream_data
             )
             print(f"Stream response: {response.status_code}")
+            time.sleep(1)
+
+            # 2. 发送completions请求获取生成的音频
+            response = self.send_completions_request()
+            print(f"completions response 1: {response.status_code}")
         
-        # 2. 发送completions请求获取生成的音频
-        headers = {"uid": self.uid}
-        response = self.session.post(
-            f"{self.base_url}/api/v1/completions",
-            headers=headers,
-            json={"prompt": ""}  # 可以为空，因为音频已通过stream发送
-        )
-        print(f"completions response 1: {response.status_code}")
+            return response
         
-        return response
+        return None
+
 
     def stream_audio_processing(self, wav_file_path):
         audio_chunks = []
@@ -206,7 +225,7 @@ class MiniCPMClient:
         response = self.send_audio_request(audio_data=audio_base64)
         
         print(f"completions response 2: {response.status_code}")
-        if response.status_code == 200:
+        if response and response.status_code == 200:
             # 实时处理每个音频片段
             try:
                 client_sse = SSEClient(response)
