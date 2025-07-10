@@ -178,6 +178,7 @@ class MiniCPMClient:
                 })
             
             # 发送stream请求
+            print(f"audio_data bytes: {len(audio_data)}")
             headers = {"uid": self.uid, "Content-Type": "application/json"}
             response = self.session.post(
                 f"{self.base_url}/api/v1/stream",
@@ -203,6 +204,7 @@ class MiniCPMClient:
         audio_base64 = self.load_audio_file(wav_file_path)
         response = self.send_audio_request(audio_data=audio_base64)
         
+        print(f"completions response: {response.status_code}")
         if response.status_code == 200:
             # 实时处理每个音频片段
             try:
