@@ -8,6 +8,7 @@ from sseclient import SSEClient
 import librosa
 import soundfile as sf
 import time
+import socket
 
 def base64_to_pcm(base64_audio_data):
     """将base64音频数据解码为PCM数据"""
@@ -159,13 +160,14 @@ class MiniCPMClient:
             "Connection": "keep-alive"
         }
         
-        # 关键：设置stream=True和适当的超时
-        response = requests.post(
+        # 使用session并设置适当的超时
+        # 注意：这里不设置读取超时，让它在流处理中单独控制
+        response = self.session.post(
             f"{self.base_url}/api/v1/completions",
             headers=headers,
             json={"prompt": ""},
             stream=True,  # 重要：必须设置为True
-            timeout=(30, 300)  # (连接超时, 读取超时)
+            timeout=30  # 只设置连接超时，读取超时在流处理中控制
         )
         
         return response
@@ -231,28 +233,9 @@ class MiniCPMClient:
             
             # 实时处理每个音频片段
             try:
-                # 方法1: 使用SSEClient
-                try:
-                    client_sse = SSEClient(response)
-                    print("使用SSEClient处理流数据...")
-                    
-                    for event in client_sse.events():
-                        if event.data and event.data.strip():
-                            print(f"收到SSE事件: {event.event}, 数据长度: {len(event.data)}")
-                            try:
-                                data = json.loads(event.data)
-                                self._process_sse_data(data, audio_chunks, text_parts)
-                                    
-                            except json.JSONDecodeError as e:
-                                print(f"JSON解析失败: {e}, 原始数据: {event.data[:100]}...")
-                                continue
-                                
-                except Exception as sse_error:
-                    print(f"SSEClient处理失败: {sse_error}")
-                    print("切换到手动流处理...")
-                    
-                    # 方法2: 手动处理流数据
-                    self._manual_stream_processing(response, audio_chunks, text_parts)
+                # 方法1: 直接处理流数据（更可靠的方法）
+                print("开始处理SSE流数据...")
+                self._process_sse_stream(response, audio_chunks, text_parts)
                             
             except Exception as e:
                 print(f"流处理错误: {e}")
@@ -290,38 +273,97 @@ class MiniCPMClient:
                     return True  # 表示结束
         return False
     
-    def _manual_stream_processing(self, response, audio_chunks, text_parts):
-        """手动处理流数据，当SSEClient失败时使用"""
-        print("开始手动处理流数据...")
+    def _process_sse_stream(self, response, audio_chunks, text_parts):
+        """处理SSE流数据，统一的流处理方法"""
+        print("开始处理SSE流数据...")
         
         buffer = ""
-        for chunk in response.iter_content(chunk_size=1024, decode_unicode=True):
-            if chunk:
-                buffer += chunk
+        chunk_count = 0
+        start_time = time.time()
+        
+        try:
+            # 使用较小的chunk size和更频繁的超时检查
+            
+            # 设置socket超时，避免在网络层面卡住
+            if hasattr(response.raw, '_fp') and hasattr(response.raw._fp, 'fp'):
+                response.raw._fp.fp.settimeout(60)  # 60秒读取超时
+            
+            last_data_time = time.time()
+            no_data_timeout = 120  # 2分钟没有数据则超时
+            
+            for chunk in response.iter_content(chunk_size=512, decode_unicode=True):
+                chunk_count += 1
+                current_time = time.time()
                 
-                # 处理完整的SSE事件
-                while "\n\n" in buffer:
-                    event_data, buffer = buffer.split("\n\n", 1)
+                # 检查总体超时（10分钟）
+                if current_time - start_time > 600:
+                    print("⚠️ 总体处理超时(10分钟)，停止读取")
+                    break
+                
+                if chunk:
+                    last_data_time = current_time
+                    buffer += chunk
                     
-                    # 解析SSE事件
-                    lines = event_data.strip().split('\n')
-                    data_line = None
+                    if chunk_count % 5 == 1:  # 每5个chunk显示一次进度
+                        print(f"📦 已处理 {chunk_count} 个数据块，耗时 {current_time - start_time:.1f}s")
                     
-                    for line in lines:
-                        if line.startswith('data: '):
-                            data_line = line[6:]  # 移除 'data: ' 前缀
-                            break
+                    # 处理完整的SSE事件
+                    events_processed = 0
+                    while "\n\n" in buffer:
+                        event_data, buffer = buffer.split("\n\n", 1)
+                        events_processed += 1
+                        
+                        # 解析SSE事件
+                        if self._parse_sse_event(event_data, audio_chunks, text_parts):
+                            print("✅ 收到结束标记，处理完成")
+                            return True
                     
-                    if data_line and data_line.strip() and data_line != '[DONE]':
-                        try:
-                            data = json.loads(data_line)
-                            print(f"手动解析到数据: {type(data)}")
-                            
-                            if self._process_sse_data(data, audio_chunks, text_parts):
-                                print("手动处理完成，收到结束标记")
-                                return
-                                
-                        except json.JSONDecodeError as e:
-                            print(f"手动解析JSON失败: {e}, 数据: {data_line[:100]}...")
-                            continue
+                    if events_processed > 0:
+                        print(f"📨 处理了 {events_processed} 个SSE事件")
+                
+                else:
+                    # 检查是否长时间没有数据
+                    if current_time - last_data_time > no_data_timeout:
+                        print(f"⚠️ {no_data_timeout}秒没有收到数据，可能连接已断开")
+                        break
+                    
+                    print("📭 收到空数据块...")
+                    time.sleep(0.1)  # 短暂等待
+                    
+        except Exception as e:
+            print(f"❌ 流处理过程中出错: {e}")
+            # 不要重新抛出异常，让上层代码继续处理
+            
+        total_time = time.time() - start_time
+        print(f"🏁 流处理结束，总耗时: {total_time:.1f}s，处理了 {chunk_count} 个数据块")
+        return False
+    
+    def _parse_sse_event(self, event_data, audio_chunks, text_parts):
+        """解析单个SSE事件"""
+        lines = event_data.strip().split('\n')
+        data_line = None
+        event_type = None
+        
+        for line in lines:
+            if line.startswith('data: '):
+                data_line = line[6:]  # 移除 'data: ' 前缀
+            elif line.startswith('event: '):
+                event_type = line[7:]  # 移除 'event: ' 前缀
+        
+        if data_line and data_line.strip() and data_line != '[DONE]':
+            try:
+                data = json.loads(data_line)
+                print(f"🔍 解析SSE事件: type={event_type}, data_type={type(data)}")
+                
+                return self._process_sse_data(data, audio_chunks, text_parts)
+                
+            except json.JSONDecodeError as e:
+                print(f"⚠️ JSON解析失败: {e}")
+                print(f"   原始数据: {data_line[:200]}...")
+                return False
+        elif data_line == '[DONE]':
+            print("🏁 收到 [DONE] 标记")
+            return True
+            
+        return False
     
