@@ -284,9 +284,15 @@ class MiniCPMClient:
         try:
             # 使用较小的chunk size和更频繁的超时检查
             
-            # 设置socket超时，避免在网络层面卡住
-            if hasattr(response.raw, '_fp') and hasattr(response.raw._fp, 'fp'):
-                response.raw._fp.fp.settimeout(60)  # 60秒读取超时
+            # 尝试设置socket超时（如果可能的话）
+            try:
+                # 获取underlying socket并设置超时
+                sock = response.raw._connection.sock
+                if sock and hasattr(sock, 'settimeout'):
+                    sock.settimeout(60)
+                    print("🔧 已设置socket读取超时: 60秒")
+            except Exception as e:
+                print(f"⚠️ 无法设置socket超时: {e}，使用应用层超时控制")
             
             last_data_time = time.time()
             no_data_timeout = 120  # 2分钟没有数据则超时
