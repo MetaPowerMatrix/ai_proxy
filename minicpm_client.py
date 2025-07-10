@@ -167,7 +167,7 @@ class MiniCPMClient:
             headers=headers,
             json={"prompt": ""},
             stream=True,  # 重要：必须设置为True
-            timeout=30  # 只设置连接超时，读取超时在流处理中控制
+            timeout=(30, 300)  # 只设置连接超时，读取超时在流处理中控制
         )
         
         return response
