@@ -157,7 +157,8 @@ class MiniCPMClient:
             "uid": self.uid,
             "Accept": "text/event-stream",
             "Cache-Control": "no-cache",
-            "Connection": "keep-alive"
+            "Connection": "keep-alive",
+            "stream": "true"
         }
         
         # 使用session并设置适当的超时
@@ -169,6 +170,7 @@ class MiniCPMClient:
             stream=True,  # 重要：必须设置为True
             timeout=(30, 300)  # 只设置连接超时，读取超时在流处理中控制
         )
+        print(f"completions响应头: {dict(response.headers)}")        
         
         return response
     
@@ -205,7 +207,9 @@ class MiniCPMClient:
             response = self.session.post(
                 f"{self.base_url}/api/v1/stream",
                 headers=headers,
-                json=stream_data
+                json=stream_data,
+                stream=True,
+                timeout=(30, 300)
             )
             print(f"Stream response: {response.json()}")
             time.sleep(1)
