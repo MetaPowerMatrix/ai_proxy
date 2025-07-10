@@ -28,7 +28,7 @@ def test_extended_audio_processing():
     
     # 1. 健康检查
     print("1️⃣ 检查服务状态...")
-    if not client.check_health():
+    if not client.check_service_status():
         print("❌ MiniCPM服务不可用")
         return
     print("✅ MiniCPM服务正常")

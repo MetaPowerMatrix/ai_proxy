@@ -208,15 +208,16 @@ class MiniCPMClient:
                 f"{self.base_url}/api/v1/stream",
                 headers=headers,
                 json=stream_data,
-                stream=True,
-                timeout=(30, 300)
+                timeout=30
             )
             print(f"Stream response: {response.json()}")
+            print(f"Stream 响应头: {dict(response.headers)}")        
             time.sleep(1)
 
             # 2. 发送completions请求获取生成的音频
             response = self.send_completions_request()
-            print(f"completions response 1: {response.json()}")
+            print(f"completions响应头 2: {dict(response.headers)}")        
+            time.sleep(1)
 
             return response
         
@@ -230,7 +231,7 @@ class MiniCPMClient:
         audio_base64 = self.load_audio_file(wav_file_path)
         response = self.send_audio_request(audio_data=audio_base64)
         
-        print(f"completions response 2: {response.json()}")
+        print(f"completions响应头 3: {dict(response.headers)}")        
         if response and response.status_code == 200:
             # 检查响应头
             print(f"响应头: {dict(response.headers)}")
