@@ -207,7 +207,7 @@ class MiniCPMClient:
                 headers=headers,
                 json=stream_data
             )
-            print(f"Stream response: {response.status_code}")
+            print(f"Stream response: {response}")
             time.sleep(1)
 
             # 2. 发送completions请求获取生成的音频
