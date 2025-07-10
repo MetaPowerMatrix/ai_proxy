@@ -24,13 +24,19 @@ def test_non_stream_audio():
         return
     
     client = MiniCPMClient()
+    print(f"🆔 客户端UID: {client.uid}")
     
     # 1. 健康检查
     print("1️⃣ 检查服务状态...")
-    if not client.check_service_status:
-        print("❌ MiniCPM服务不可用")
+    try:
+        health_response = client.check_service_status()
+        if health_response.status_code != 200:
+            print("❌ MiniCPM服务不可用")
+            return
+        print("✅ MiniCPM服务正常")
+    except Exception as e:
+        print(f"❌ 健康检查失败: {e}")
         return
-    print("✅ MiniCPM服务正常")
     
     # 2. 加载音频
     try:
@@ -58,6 +64,8 @@ def test_non_stream_audio():
         }
         
         headers = {"uid": client.uid, "Content-Type": "application/json"}
+        print(f"📤 Stream请求使用UID: {client.uid}")
+        
         response = requests.post(
             f"{client.base_url}/api/v1/stream",
             headers=headers,
@@ -69,6 +77,8 @@ def test_non_stream_audio():
         if response.status_code != 200:
             print(f"❌ Stream请求失败: {response.text}")
             return
+        else:
+            print("✅ Stream请求成功")
             
     except Exception as e:
         print(f"❌ Stream请求异常: {e}")
@@ -78,6 +88,7 @@ def test_non_stream_audio():
     print("4️⃣ 发送非流式completions请求...")
     try:
         headers = {"uid": client.uid}  # 不设置Accept: text/event-stream
+        print(f"📤 Completions请求使用UID: {client.uid}")
         
         start_time = time.time()
         response = requests.post(
