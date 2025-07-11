@@ -39,6 +39,15 @@ def test_smart_audio_processing():
         print(f"❌ 健康检查失败: {e}")
         return
     
+    # 1.5. 初始化session
+    print("\n1.5️⃣ 初始化session...")
+    try:
+        init_result = client.init_with_chinese_voice(audio_file)
+        print("✅ Session初始化成功")
+    except Exception as e:
+        print(f"❌ Session初始化失败: {e}")
+        return
+    
     # 2. 测试智能音频处理
     print("\n2️⃣ 开始智能音频处理...")
     print("🧠 智能逻辑:")
@@ -112,6 +121,15 @@ def test_stream_response_analysis():
     
     client = MiniCPMClient()
     
+    # 0. 初始化session
+    print("0️⃣ 初始化session...")
+    try:
+        init_result = client.init_with_chinese_voice("test_audio.wav")
+        print("✅ Session初始化成功")
+    except Exception as e:
+        print(f"❌ Session初始化失败: {e}")
+        return
+    
     # 1. 加载音频
     print("1️⃣ 加载音频文件...")
     try:
@@ -181,11 +199,25 @@ def test_different_scenarios():
         print(f"\n{i}️⃣ 场景测试: {scenario['name']}")
         
         try:
-            audio_base64 = client.load_audio_file("test_audio.wav")
-            
+            audio_file = "test_audio.wav"
+            if not os.path.exists(audio_file):
+                print(f"   ❌ 音频文件 {audio_file} 不存在")
+                continue
+                
             # 使用不同的UID避免冲突
             client.uid = f"smart_test_{int(time.time() * 1000)}_{i}"
             print(f"   使用UID: {client.uid}")
+            
+            # 🔑 关键修复：每次更改UID时先调用init_with_chinese_voice创建新session
+            print(f"   🔄 为新UID初始化session...")
+            try:
+                init_result = client.init_with_chinese_voice(audio_file)
+                print(f"   ✅ Session初始化成功")
+            except Exception as init_error:
+                print(f"   ❌ Session初始化失败: {init_error}")
+                continue
+            
+            audio_base64 = client.load_audio_file(audio_file)
             
             stream_result = client.send_audio_with_completion_flag(
                 audio_base64, 
@@ -234,7 +266,9 @@ def main():
     print("3. ✅ 避免不必要的completions请求")
     print("4. ✅ 兼容多种响应格式")
     print("5. ✅ 显著减少处理时间")
+    print("6. ✅ 每次UID变更时自动初始化Session")
     print("\n💡 智能处理应该解决超时问题并提高效率!")
+    print("🔧 重要修复: 确保每次使用新UID时都先初始化session!")
 
 
 if __name__ == "__main__":
