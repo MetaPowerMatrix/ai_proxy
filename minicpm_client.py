@@ -171,7 +171,7 @@ class MiniCPMClient:
         return response
     
     def send_audio_with_completion_flag(self, audio_data, end_of_stream=True):
-        """发送音频并明确标记是否为流的结束"""
+        """发送音频并明确标记是否为流的结束，返回解析后的结果"""
         stream_data = {
             "messages": [{
                 "role": "user",
@@ -208,16 +208,37 @@ class MiniCPMClient:
                 try:
                     result = response.json()
                     print(f"Stream response: {result}")
-                except:
+                    
+                    # 检查是否包含处理完成的数据
+                    if isinstance(result, dict) and 'choices' in result:
+                        choices = result['choices']
+                        if isinstance(choices, dict):
+                            finish_reason = choices.get('finish_reason')
+                            content = choices.get('content')
+                            
+                            print(f"💡 检测到完成状态: finish_reason={finish_reason}")
+                            
+                            if finish_reason == 'done':
+                                print("✅ 服务端表示处理已完成")
+                                # 检查是否有音频数据
+                                if 'audio' in choices:
+                                    print("🎵 在Stream响应中发现音频数据")
+                                    return {'success': True, 'result': result, 'has_audio': True}
+                                else:
+                                    print("📝 处理完成但Stream响应中无音频数据")
+                                    return {'success': True, 'result': result, 'has_audio': False}
+                    
+                    return {'success': True, 'result': result, 'has_audio': False}
+                except Exception as parse_error:
                     print(f"Stream response (非JSON): {response.text[:200]}")
-                return True
+                    return {'success': True, 'result': None, 'has_audio': False}
             else:
                 print(f"Stream请求失败: {response.text}")
-                return False
+                return {'success': False, 'error': response.text}
                 
         except Exception as e:
             print(f"Stream请求异常: {e}")
-            return False
+            return {'success': False, 'error': str(e)}
     
     def force_completion(self):
         """强制触发流完成（发送空的停止消息）"""
@@ -290,28 +311,95 @@ class MiniCPMClient:
                     continue
                 
         return None
+    
+    def get_completions_with_quick_timeout(self, max_retries=1):
+        """快速超时的completions请求（用于已完成的处理）"""
+        for attempt in range(max_retries):
+            try:
+                print(f"快速completions请求 (第{attempt+1}次，超时15秒)")
+                
+                headers = {
+                    "uid": self.uid,
+                    "Accept": "text/event-stream",
+                    "Cache-Control": "no-cache"
+                }
+                
+                response = self.session.post(
+                    f"{self.base_url}/api/v1/completions",
+                    headers=headers,
+                    json={"prompt": ""},
+                    stream=True,
+                    timeout=(5, 15)  # 5秒连接，15秒读取超时（因为处理已完成）
+                )
+                
+                if response.status_code == 200:
+                    print(f"快速completions请求成功 (第{attempt+1}次)")
+                    return response
+                else:
+                    print(f"快速请求失败: {response.status_code}")
+                    return None
+                    
+            except requests.exceptions.Timeout:
+                print(f"快速请求超时 (尝试 {attempt+1}/{max_retries})")
+                if attempt < max_retries - 1:
+                    time.sleep(1)
+                    continue
+            except Exception as e:
+                print(f"快速请求异常: {e}")
+                return None
+                
+        return None
 
     def send_audio_request(self, audio_data=None, image_data=None):
-        """发送音频请求到MiniCPM-o服务器 - 改进版本"""
+        """发送音频请求到MiniCPM-o服务器 - 智能版本"""
         
         if not audio_data:
             return None
             
         # 1. 发送音频到stream接口并明确标记结束
-        success = self.send_audio_with_completion_flag(audio_data, end_of_stream=True)
+        stream_result = self.send_audio_with_completion_flag(audio_data, end_of_stream=True)
         
-        if not success:
+        if not stream_result['success']:
             print("❌ 音频发送失败")
             return None
         
-        # 2. 等待短暂时间让服务器处理
+        # 2. 检查Stream响应是否已包含完整结果
+        if stream_result.get('result') and isinstance(stream_result['result'], dict):
+            choices = stream_result['result'].get('choices', {})
+            if isinstance(choices, dict) and choices.get('finish_reason') == 'done':
+                print("🎯 Stream响应显示处理已完成，检查是否需要额外的completions请求...")
+                
+                # 如果Stream响应中已有音频数据，直接返回
+                if stream_result.get('has_audio'):
+                    print("✅ Stream响应中已包含音频数据，无需额外请求")
+                    # 构造一个兼容的响应对象
+                    return self._create_mock_response(stream_result['result'])
+                
+                # 如果没有音频数据，尝试短暂的completions请求
+                print("📝 Stream响应无音频数据，尝试简短的completions请求...")
+                time.sleep(1)  # 较短等待
+                
+                # 跳过强制完成信号，因为已经完成了
+                response = self.get_completions_with_quick_timeout(max_retries=1)
+                
+                if response and response.status_code == 200:
+                    print("✅ 获取到completions响应")
+                    return response
+                else:
+                    print("⚠️ Completions请求未获得有效响应，但Stream处理已完成")
+                    return self._create_mock_response(stream_result['result'])
+        
+        # 3. 如果Stream响应未完成，执行完整流程
+        print("🔄 Stream响应未显示完成，执行完整处理流程...")
+        
+        # 等待服务器处理
         print("等待服务器处理音频...")
         time.sleep(2)
         
-        # 3. 强制触发完成状态
+        # 强制触发完成状态
         self.force_completion()
         
-        # 4. 获取completions响应
+        # 获取completions响应
         print("获取completions响应...")
         response = self.get_completions_with_retry()
         
@@ -321,6 +409,28 @@ class MiniCPMClient:
         
         print("✅ 成功获取completions响应")
         return response
+    
+    def _create_mock_response(self, result_data):
+        """创建一个模拟的响应对象用于兼容现有流程"""
+        class MockResponse:
+            def __init__(self, data):
+                self.status_code = 200
+                self.headers = {'content-type': 'application/json'}
+                self._data = data
+                
+            def json(self):
+                return self._data
+                
+            def iter_lines(self, decode_unicode=True):
+                # 如果有音频数据，构造SSE格式
+                if 'choices' in self._data:
+                    choices = self._data['choices']
+                    if isinstance(choices, dict):
+                        data_line = f"data: {json.dumps({'choices': [choices]})}"
+                        yield data_line
+                        yield "data: [DONE]"
+        
+        return MockResponse(result_data)
 
 
     def stream_audio_processing(self, wav_file_path):
@@ -342,8 +452,12 @@ class MiniCPMClient:
         
         if response.status_code == 200:
             try:
+                # 根据响应类型智能选择超时时间
+                # 如果是MockResponse说明使用了快速路径，用较短超时
+                timeout_seconds = 30 if hasattr(response, '_data') else 300
+                
                 # 使用改进的SSE流处理
-                self._process_sse_stream_improved(response, audio_chunks, text_parts)
+                self._process_sse_stream_improved(response, audio_chunks, text_parts, timeout_seconds)
                             
             except Exception as e:
                 print(f"流处理错误: {e}")
@@ -384,18 +498,22 @@ class MiniCPMClient:
                     return True  # 表示结束
         return False
     
-    def _process_sse_stream_improved(self, response, audio_chunks, text_parts):
-        """改进的SSE流处理方法，更简洁高效"""
-        print("开始处理SSE流...")
+    def _process_sse_stream_improved(self, response, audio_chunks, text_parts, timeout_seconds=300):
+        """改进的SSE流处理方法，支持智能超时"""
+        timeout_desc = "快速" if timeout_seconds < 60 else "标准"
+        print(f"开始处理SSE流... ({timeout_desc}模式，超时{timeout_seconds}秒)")
         
         try:
             line_count = 0
             start_time = time.time()
+            last_data_time = start_time
             
             for line in response.iter_lines(decode_unicode=True):
                 line_count += 1
+                current_time = time.time()
                 
                 if line and line.startswith('data: '):
+                    last_data_time = current_time
                     data_str = line[6:]  # 移除 'data: ' 前缀
                     
                     # 检查结束标记
@@ -426,18 +544,25 @@ class MiniCPMClient:
                                 print("✅ 检测到文本结束标记")
                                 break
                         
-                        # 显示处理进度
-                        if line_count % 10 == 0:
-                            elapsed = time.time() - start_time
+                        # 显示处理进度（快速模式少显示）
+                        progress_interval = 5 if timeout_seconds < 60 else 10
+                        if line_count % progress_interval == 0:
+                            elapsed = current_time - start_time
                             print(f"⏱️ 已处理 {line_count} 行，耗时 {elapsed:.1f}s")
                             
                     except json.JSONDecodeError:
                         # 跳过无法解析的数据
                         continue
                 
-                # 检查超时（5分钟）
-                if time.time() - start_time > 300:
-                    print("⚠️ 处理超时(5分钟)，停止读取")
+                # 动态超时检查
+                if current_time - start_time > timeout_seconds:
+                    print(f"⚠️ 处理超时({timeout_seconds}秒)，停止读取")
+                    break
+                
+                # 无数据超时检查（快速模式更严格）
+                no_data_timeout = min(30, timeout_seconds // 2)
+                if current_time - last_data_time > no_data_timeout:
+                    print(f"⚠️ {no_data_timeout}秒无数据，可能连接断开")
                     break
                     
         except Exception as e:

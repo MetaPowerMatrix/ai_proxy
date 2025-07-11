@@ -116,7 +116,10 @@ def test_individual_components():
     print("单独测试各个组件")
     print("=" * 70)
     
+    # 使用新的UID避免与前面的测试冲突
     client = MiniCPMClient()
+    client.uid = f"component_test_{int(time.time() * 1000)}"
+    print(f"🆔 组件测试UID: {client.uid}")
     
     # 1. 测试音频加载
     print("1️⃣ 测试音频加载...")
@@ -129,11 +132,16 @@ def test_individual_components():
     
     # 2. 测试stream请求（带结束标记）
     print("\n2️⃣ 测试stream请求（带结束标记）...")
-    success = client.send_audio_with_completion_flag(audio_base64, end_of_stream=True)
-    if success:
+    stream_result = client.send_audio_with_completion_flag(audio_base64, end_of_stream=True)
+    if stream_result.get('success'):
         print("✅ Stream请求成功")
+        result = stream_result.get('result', {})
+        choices = result.get('choices', {})
+        if choices.get('finish_reason') == 'done':
+            print(f"   🎯 处理状态: 已完成")
+        print(f"   📊 响应数据: {result}")
     else:
-        print("❌ Stream请求失败")
+        print(f"❌ Stream请求失败: {stream_result.get('error')}")
         return
     
     # 3. 测试强制完成
