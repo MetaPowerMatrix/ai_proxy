@@ -160,8 +160,8 @@ class MiniCPMClient:
         print(f"Stream response: {response.json()}")
         print(f"Stream 响应头: {dict(response.headers)}")        
 
-        response2 = self.send_completions_request()
-        print(f"completions响应头: {dict(response2.headers)}")
+        # response2 = self.send_completions_request()
+        # print(f"completions响应头: {dict(response2.headers)}")
 
         return response.json()
         
@@ -191,7 +191,9 @@ class MiniCPMClient:
                                 
                                 if audio_base64:
                                     pcm_data = base64_to_pcm(audio_base64)
-                                    if pcm_data[0] is not None:  # 检查解析是否成功
+                                    # 正确检查pcm_data是否有效
+                                    if (pcm_data and pcm_data[0] is not None and 
+                                        hasattr(pcm_data[0], '__len__') and len(pcm_data[0]) > 0):
                                         print(f"📦 收到音频片段: {len(audio_base64)} 字符")
                                         on_audio_done(pcm_data[0])
 
