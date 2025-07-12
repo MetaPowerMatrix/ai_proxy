@@ -191,6 +191,7 @@ class MiniCPMClient:
                                 
                                 if audio_base64:
                                     pcm_data = base64_to_pcm(audio_base64)
+                                    print(f"pcm_data: {pcm_data}")
                                     # 正确检查pcm_data是否有效
                                     if (pcm_data and pcm_data[0] is not None and 
                                         hasattr(pcm_data[0], '__len__') and len(pcm_data[0]) > 0):
