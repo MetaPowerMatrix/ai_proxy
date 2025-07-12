@@ -188,7 +188,7 @@ class MiniCPMClient:
                                     pcm_data = base64_to_pcm(audio_base64)
                                     if pcm_data[0] is not None:  # 检查解析是否成功
                                         print(f"📦 收到音频片段: {len(audio_base64)} 字符")
-                                        on_audio_done(pcm_data)
+                                        on_audio_done(pcm_data[0])
 
                                 if text and text != '\n<end>':
                                     print(f"💬 收到文本: {text}")
