@@ -8,7 +8,7 @@ from sseclient import SSEClient
 import librosa
 import soundfile as sf
 import time
-import socket
+import threading
 
 def base64_to_pcm(base64_audio_data):
     """将base64音频数据解码为PCM数据"""
@@ -102,6 +102,7 @@ class MiniCPMClient:
         self.base_url = base_url
         self.session = requests.Session()
         self.uid = f"proxy_client_001"
+        self.responses = []
     
     def load_audio_file(self, file_path):
         """加载音频文件并转换为base64"""
@@ -153,6 +154,43 @@ class MiniCPMClient:
 
         return response.json()
         
+    def start_completions_listener(self):
+        """启动completions接口监听"""
+        def listen():
+            try:
+                response = requests.post(
+                    f"{self.base_url}/completions",
+                    json={},
+                    headers={"uid": self.uid, "Accept": "text/event-stream"},
+                    stream=True
+                )
+                
+                print("✅ Completions连接建立")
+                for line in response.iter_lines():
+                    if line:
+                        line_text = line.decode()
+                        if line_text.startswith("data: "):
+                            try:
+                                data = json.loads(line_text[6:])
+                                self.responses.append(data)
+                                
+                                choice = data.get('choices', [{}])[0]
+                                audio = choice.get('audio', '')
+                                text = choice.get('text', '')
+                                
+                                if audio:
+                                    print(f"🎵 收到音频: {len(audio)} bytes")
+                                if text and text != '\n<end>':
+                                    print(f"💬 收到文本: {text}")
+                                    
+                            except json.JSONDecodeError:
+                                print(f"原始数据: {line_text}")
+            except Exception as e:
+                print(f"Completions监听错误: {e}")
+        
+        self.completions_thread = threading.Thread(target=listen)
+        self.completions_thread.daemon = True
+        self.completions_thread.start()
 
     def send_completions_request(self) -> requests.Response:
         """发送completions请求获取SSE流（旧版本，保留兼容性）"""

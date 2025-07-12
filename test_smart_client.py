@@ -239,8 +239,8 @@ def test_chunked_audio_processing():
 
     client = MiniCPMClient()
     init_with_custom_vad_threshold(client, reference_audio_file, 0.8)
-    
-    
+    client.start_completions_listener()
+
     # 分片处理
     chunks = split_audio_into_chunks(audio_file, num_chunks=20)
     if not chunks:
@@ -305,33 +305,33 @@ def test_chunked_audio_processing():
     print(f"   📈 平均每片段: {total_time/len(chunks):.2f}s")
     
     # 如果需要获取最终结果，可以调用completions
-    if successful_chunks > 0:
-        print(f"\n4️⃣ 获取最终处理结果...")
-        try:
-            final_audio_chunks, final_text = client.stream_audio_processing()
+    # if successful_chunks > 0:
+    #     print(f"\n4️⃣ 获取最终处理结果...")
+    #     try:
+    #         final_audio_chunks, final_text = client.stream_audio_processing()
             
-            if final_audio_chunks or final_text:
-                print(f"✅ 获取到最终结果:")
-                print(f"   音频片段数: {len(final_audio_chunks) if final_audio_chunks else 0}")
-                print(f"   文本长度: {len(final_text) if final_text else 0}")
-                print(f"   文本内容: {final_text if final_text else '无'}")
+    #         if final_audio_chunks or final_text:
+    #             print(f"✅ 获取到最终结果:")
+    #             print(f"   音频片段数: {len(final_audio_chunks) if final_audio_chunks else 0}")
+    #             print(f"   文本长度: {len(final_text) if final_text else 0}")
+    #             print(f"   文本内容: {final_text if final_text else '无'}")
                 
-                # 保存最终音频
-                if final_audio_chunks:
-                    try:
-                        from minicpm_client import merge_pcm_chunks, save_pcm_as_wav
-                        merged_pcm = merge_pcm_chunks([chunk[0] for chunk in final_audio_chunks])
-                        if merged_pcm is not None:
-                            output_file = "output_chunked.wav"
-                            save_pcm_as_wav(merged_pcm, 16000, 1, output_file)
-                            print(f"   💾 最终音频已保存为 {output_file}")
-                    except Exception as e:
-                        print(f"   ⚠️ 保存最终音频失败: {e}")
-            else:
-                print(f"⚠️ 未获取到最终结果")
+    #             # 保存最终音频
+    #             if final_audio_chunks:
+    #                 try:
+    #                     from minicpm_client import merge_pcm_chunks, save_pcm_as_wav
+    #                     merged_pcm = merge_pcm_chunks([chunk[0] for chunk in final_audio_chunks])
+    #                     if merged_pcm is not None:
+    #                         output_file = "output_chunked.wav"
+    #                         save_pcm_as_wav(merged_pcm, 16000, 1, output_file)
+    #                         print(f"   💾 最终音频已保存为 {output_file}")
+    #                 except Exception as e:
+    #                     print(f"   ⚠️ 保存最终音频失败: {e}")
+    #         else:
+    #             print(f"⚠️ 未获取到最终结果")
                 
-        except Exception as e:
-            print(f"❌ 获取最终结果失败: {e}")
+    #     except Exception as e:
+    #         print(f"❌ 获取最终结果失败: {e}")
     
     # 性能分析
     success_rate = (successful_chunks / len(chunks)) * 100 if chunks else 0
