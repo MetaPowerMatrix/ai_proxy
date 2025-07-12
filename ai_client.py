@@ -77,23 +77,40 @@ def setup_directories():
 
 def on_audio_done(audio_chunks):
     global ws, session_id_bytes
+    
+    logger.info(f"📦 收到音频数据: 类型={type(audio_chunks)}, 形状={getattr(audio_chunks, 'shape', 'N/A')}")
+    
+    # 将NumPy数组转换为字节数据
+    if hasattr(audio_chunks, 'tobytes'):
+        audio_bytes = audio_chunks.tobytes()
+        logger.info(f"✅ 成功转换为字节数据: {len(audio_bytes)} 字节")
+    elif hasattr(audio_chunks, 'tostring'):
+        audio_bytes = audio_chunks.tostring()
+        logger.info(f"✅ 成功转换为字节数据: {len(audio_bytes)} 字节")
+    else:
+        logger.error("无法将音频数据转换为字节格式")
+        return
+    
     # 发送音频回复 - 分块发送
     chunk_size = WS_CHUNK_SIZE
-    total_chunks = (len(audio_chunks) + chunk_size - 1) // chunk_size
+    total_chunks = (len(audio_bytes) + chunk_size - 1) // chunk_size
     
-    for i in range(0, len(audio_chunks), chunk_size):
+    for i in range(0, len(audio_bytes), chunk_size):
         # 截取一块音频数据
-        audio_chunk = audio_chunks[i:i+chunk_size]
+        audio_chunk = audio_bytes[i:i+chunk_size]
         # 发送数据块
         if not send_audio_chunk(ws, session_id_bytes, audio_chunk):
             logger.error(f"发送音频数据块失败: {i//chunk_size + 1}/{total_chunks}")
             break
+        logger.info(f"📤 发送音频块: {i//chunk_size + 1}/{total_chunks}, 大小: {len(audio_chunk)} 字节")
         # 短暂暂停，避免发送过快
         time.sleep(0.05)
 
 
-def on_text_done(text_chunks):
-    pass
+def on_text_done(text):
+    """处理接收到的文本数据"""
+    logger.info(f"💬 收到文本: {text}")
+    # 这里可以添加文本处理逻辑，比如发送到WebSocket等
 
 
 def check_service_status(reference_audio_file):
