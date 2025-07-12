@@ -105,6 +105,8 @@ class MiniCPMClient:
         self.session = requests.Session()
         self.uid = f"proxy_client_001"
         self.responses = []
+        self.audio_chunks = []
+        self.text_chunks = []
     
     def load_audio_file(self, file_path):
         """加载音频文件并转换为base64"""
@@ -174,17 +176,22 @@ class MiniCPMClient:
                         if line_text.startswith("data: "):
                             try:
                                 data = json.loads(line_text[6:])
-                                self.responses.append(data)
+                                # self.responses.append(data)
                                 
                                 choice = data.get('choices', [{}])[0]
-                                audio = choice.get('audio', '')
+                                audio_base64 = choice.get('audio', '')
                                 text = choice.get('text', '')
                                 
-                                if audio:
-                                    print(f"🎵 收到音频: {len(audio)} bytes")
+                                if audio_base64:
+                                    pcm_data = base64_to_pcm(audio_base64)
+                                    if pcm_data[0] is not None:  # 检查解析是否成功
+                                        self.audio_chunks.append(pcm_data)
+                                        print(f"📦 收到音频片段: {len(audio_base64)} 字符")
+
                                 if text and text != '\n<end>':
                                     print(f"💬 收到文本: {text}")
-                                    
+                                    self.text_chunks.append(text)
+                        
                             except json.JSONDecodeError:
                                 print(f"原始数据: {line_text}")
             except Exception as e:
