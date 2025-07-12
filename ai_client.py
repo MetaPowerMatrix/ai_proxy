@@ -62,18 +62,11 @@ USE_F5TTS = False
 USE_UNCENSORED = False
 
 # WebSocket相关配置
-WS_HEARTBEAT_INTERVAL = 30  # 心跳间隔（秒）- 增加间隔
-WS_RECONNECT_DELAY = 3  # 重连延迟（秒）- 减少初始延迟
-WS_MAX_RETRIES = 5  # 最大重试次数
+WS_HEARTBEAT_INTERVAL = 10  # 心跳间隔（秒）
+WS_RECONNECT_DELAY = 5  # 重连延迟（秒）
+WS_MAX_RETRIES = 3  # 最大重试次数
 WS_CHUNK_SIZE = 4096  # 数据分块大小
 WS_SEND_TIMEOUT = 30  # 发送超时时间（秒）
-WS_CONNECTION_TIMEOUT = 10  # 连接超时时间（秒）
-
-# 全局变量
-ws = None
-ws_connected = False
-reconnect_attempt = 0
-heartbeat_thread = None
 
 
 def setup_directories():
@@ -395,44 +388,25 @@ def process_audio(raw_audio_data, session_id):
 
 def send_audio_chunk(ws, session_id_bytes, audio_chunk, retry_count=0):
     """发送音频数据块，带重试机制"""
-    global ws_connected
-    
     try:
-        # 检查连接状态
-        if not ws or not hasattr(ws, 'sock') or not ws.sock:
-            logger.error("WebSocket对象无效")
-            ws_connected = False
-            return False
-            
-        if not ws_connected:
-            logger.error("WebSocket连接状态为断开")
+        if not ws or not ws.sock or not ws.sock.connected:
+            logger.error("WebSocket连接已断开，无法发送数据")
             return False
             
         # 添加会话ID前缀
         data_with_session = session_id_bytes + audio_chunk
         ws.send(data_with_session, websocket.ABNF.OPCODE_BINARY)
-        logger.debug(f"成功发送音频数据块: {len(audio_chunk)} 字节")
         return True
-        
-    except websocket.WebSocketConnectionClosedException as e:
-        logger.warning(f"WebSocket连接已关闭: {e}")
-        ws_connected = False
-        
+    except websocket.WebSocketConnectionClosedException:
         if retry_count < WS_MAX_RETRIES:
-            logger.info(f"等待重连后重试发送 ({retry_count + 1}/{WS_MAX_RETRIES})")
-            time.sleep(2)  # 等待重连
+            logger.warning(f"发送数据失败，正在重试 ({retry_count + 1}/{WS_MAX_RETRIES})")
+            time.sleep(WS_RECONNECT_DELAY)
             return send_audio_chunk(ws, session_id_bytes, audio_chunk, retry_count + 1)
         else:
             logger.error("达到最大重试次数，发送失败")
             return False
-            
-    except websocket.WebSocketTimeoutException:
-        logger.warning("发送数据超时")
-        return False
-        
     except Exception as e:
         logger.error(f"发送数据时出错: {str(e)}")
-        ws_connected = False
         return False
 
 def on_message(ws, message):
@@ -489,42 +463,37 @@ def on_message(ws, message):
         logger.error(f"处理消息时出错: {str(e)}, 出错行号: {line_number}")
 
 def start_websocket():
-    """启动WebSocket连接"""
-    global ws, ws_connected, heartbeat_thread
+    global ws, reference_audio_file
     
-    try:
-        logger.info(f"正在连接到WebSocket: {WS_URL}")
-        
-        ws = websocket.WebSocketApp(
-            WS_URL,
-            on_message=on_message,
-            on_error=on_error,
-            on_close=on_close,
-            on_open=on_open,
-            on_ping=on_ping,
-            on_pong=on_pong
-        )
-        
-        # 启动心跳线程
-        if heartbeat_thread is None or not heartbeat_thread.is_alive():
-            heartbeat_thread = start_heartbeat()
-        
-        # 设置WebSocket选项，包括超时配置
-        ws.run_forever(
-            ping_interval=60,  # 每60秒发送ping
-            ping_timeout=10,   # ping超时时间
-            sslopt={"check_hostname": False, "cert_reqs": websocket.ssl.CERT_NONE} if WS_URL.startswith('wss') else None
-        )
-        
-    except Exception as e:
-        logger.error(f"WebSocket启动失败: {e}")
-        ws_connected = False
-        
-    finally:
-        # 确保心跳线程正确关闭
-        if heartbeat_thread and heartbeat_thread.is_alive():
-            logger.info("等待心跳线程结束...")
-            heartbeat_thread.join(timeout=5)
+    """启动WebSocket连接"""
+    ws = websocket.WebSocketApp(
+        WS_URL,
+        on_message=on_message,
+        on_error=on_error,
+        on_close=on_close,
+        on_ping=on_ping,
+        on_pong=on_pong
+    )
+    ws.on_open = on_open
+    
+    # 启动心跳线程
+    heartbeat_thread = start_heartbeat(ws)
+
+    # 检查服务状态
+    if not check_service_status(reference_audio_file):
+        logger.error("服务状态检查失败，请检查服务是否正常运行")
+        return
+
+
+    # 设置WebSocket选项
+    ws.run_forever(
+        ping_interval=None,
+        ping_timeout=None,
+    )
+    
+    # 等待心跳线程结束
+    if heartbeat_thread:
+        heartbeat_thread.join()
             
 def initialize_audio_categories():
     """初始化音频分类"""
@@ -594,10 +563,6 @@ def main():
     global reference_audio_file
     reference_audio_file = AUDIO_CATEGORIES.get(args.voice_category, AUDIO_CATEGORIES["御姐配音暧昧"])
 
-    # 检查服务状态
-    if not check_service_status(reference_audio_file):
-        logger.error("服务状态检查失败，请检查服务是否正常运行")
-        return
 
     # 打印启动信息
     logger.info("=" * 50)
@@ -612,196 +577,77 @@ def main():
     logger.info(f"音色名称: {args.voice_category}")
     logger.info("=" * 50)
     
-    # 启动WebSocket连接
-    try:
-        start_websocket()
-    except KeyboardInterrupt:
-        logger.info("收到中断信号，正在关闭客户端...")
-        # 清理资源
-        global ws, ws_connected, heartbeat_thread
-        ws_connected = False
-        if ws:
-            try:
-                ws.close()
-            except:
-                pass
-        if heartbeat_thread and heartbeat_thread.is_alive():
-            logger.info("等待心跳线程结束...")
-            heartbeat_thread.join(timeout=5)
-        logger.info("客户端已关闭")
-    except Exception as e:
-        logger.error(f"客户端运行出错: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
+    # 启动异步循环
+    asyncio.run(start_websocket())
 
-def send_heartbeat():
+def send_heartbeat(ws):
     """发送心跳包保持连接活跃"""
-    global ws, ws_connected
-    
     try:
-        if ws and ws_connected and hasattr(ws, 'sock') and ws.sock:
-            heartbeat_data = {
-                "type": "heartbeat",
-                "timestamp": int(time.time()),
-                "client_type": "ai_backend"
-            }
-            ws.send(json.dumps(heartbeat_data))
+        if ws and ws.sock and ws.sock.connected:
+            ws.send(json.dumps({"type": "heartbeat"}))
             logger.debug("已发送心跳包")
-            return True
-        else:
-            logger.debug("WebSocket未连接，跳过心跳")
-            return False
-    except websocket.WebSocketConnectionClosedException:
-        logger.warning("心跳发送失败：连接已关闭")
-        ws_connected = False
-        return False
     except Exception as e:
         logger.error(f"发送心跳包失败: {str(e)}")
-        return False
 
-def start_heartbeat():
+def start_heartbeat(ws):
     """启动心跳线程"""
-    def heartbeat_worker():
-        logger.info(f"心跳线程启动，间隔: {WS_HEARTBEAT_INTERVAL}秒")
-        
+    def heartbeat_thread():
         while True:
             try:
-                if not send_heartbeat():
-                    # 如果心跳发送失败，等待一段时间后继续尝试
-                    time.sleep(5)
-                else:
-                    time.sleep(WS_HEARTBEAT_INTERVAL)
-                    
+                if ws and ws.sock and ws.sock.connected:
+                    send_heartbeat(ws)
+                time.sleep(WS_HEARTBEAT_INTERVAL)
             except Exception as e:
                 logger.error(f"心跳线程出错: {str(e)}")
-                time.sleep(10)  # 出错后等待10秒再继续
+                break
     
     import threading
-    heartbeat = threading.Thread(target=heartbeat_worker, daemon=True)
+    heartbeat = threading.Thread(target=heartbeat_thread, daemon=True)
     heartbeat.start()
     return heartbeat
 
 # 重连参数
-MAX_RECONNECT_ATTEMPTS = 15
-INITIAL_RECONNECT_DELAY = 3
+max_reconnect_attempts = 10
+reconnect_delay_seconds = 5
+reconnect_attempt = 0
 
 def on_error(ws, error):
     """处理错误"""
-    global ws_connected
     logger.error(f"WebSocket错误: {error}")
-    ws_connected = False
 
 def on_close(ws, close_status_code, close_msg):
     """处理连接关闭"""
-    global reconnect_attempt, ws_connected
+    global reconnect_attempt, reconnect_delay_seconds, max_reconnect_attempts
+    logger.warning(f"WebSocket连接已关闭: 状态码={close_status_code}, 消息={close_msg}")
     
-    ws_connected = False
-    
-    # 分析关闭原因
-    close_reason = get_close_reason(close_status_code)
-    logger.warning(f"WebSocket连接已关闭: 状态码={close_status_code}, 原因={close_reason}, 消息={close_msg}")
-    
-    # 决定是否重连
-    should_reconnect = should_attempt_reconnect(close_status_code)
-    
-    if should_reconnect and reconnect_attempt < MAX_RECONNECT_ATTEMPTS:
+    # 尝试重新连接
+    if reconnect_attempt < max_reconnect_attempts:
         reconnect_attempt += 1
-        
-        # 计算重连延迟（指数退避，最大60秒）
-        delay = min(60, INITIAL_RECONNECT_DELAY * (2 ** (reconnect_attempt - 1)))
-        
-        logger.info(f"第 {reconnect_attempt}/{MAX_RECONNECT_ATTEMPTS} 次重连，将在 {delay} 秒后尝试...")
-        time.sleep(delay)
-        
-        # 重新启动WebSocket
-        import threading
-        reconnect_thread = threading.Thread(target=start_websocket, daemon=True)
-        reconnect_thread.start()
+        logger.info(f"将在 {reconnect_delay_seconds} 秒后尝试重新连接...")
+        time.sleep(reconnect_delay_seconds)
+        # 指数退避算法增加重连延迟
+        reconnect_delay_seconds = min(60, reconnect_delay_seconds * 1.5)
+        start_websocket()
     else:
-        if not should_reconnect:
-            logger.info("服务端主动关闭连接，不进行重连")
-        else:
-            logger.error(f"达到最大重连次数 ({MAX_RECONNECT_ATTEMPTS})，停止重连")
-
-def should_attempt_reconnect(close_code):
-    """根据关闭代码决定是否应该重连"""
-    # 1000: 正常关闭，可以重连
-    # 1001: 端点离开，可以重连
-    # 1006: 异常关闭，可以重连
-    # 1011: 服务器错误，可以重连
-    # 其他代码：根据具体情况决定
-    reconnectable_codes = [1000, 1001, 1006, 1011]
-    return close_code in reconnectable_codes or close_code is None
-
-def get_close_reason(close_code):
-    """获取关闭原因的描述"""
-    reasons = {
-        1000: "正常关闭",
-        1001: "端点离开",
-        1002: "协议错误",
-        1003: "不支持的数据类型",
-        1006: "异常关闭",
-        1007: "数据格式错误",
-        1008: "策略违反",
-        1009: "消息过大",
-        1010: "扩展协商失败",
-        1011: "服务器错误"
-    }
-    return reasons.get(close_code, f"未知错误码: {close_code}")
+        logger.error(f"达到最大重连次数 ({max_reconnect_attempts})，停止重连")
 
 def on_open(ws):
     """处理连接成功"""
-    global reconnect_attempt, ws_connected
-    
+    global reconnect_attempt
     reconnect_attempt = 0
-    ws_connected = True
     
     # 发送AI后端标识
-    try:
-        identification = {
-            "client_type": "ai_backend",
-            "timestamp": int(time.time()),
-            "version": "1.0"
-        }
-        ws.send(json.dumps(identification))
-        logger.info("WebSocket连接已建立，已发送身份标识")
-    except Exception as e:
-        logger.error(f"发送身份标识失败: {e}")
-        ws_connected = False
+    ws.send(json.dumps({
+        "client_type": "ai_backend"
+    }))
+    
+    logger.info("WebSocket连接已建立")
 
 def on_ping(wsapp, message):
-    """处理ping消息"""
-    logger.debug("收到ping消息，自动回复pong")
+    print("Got a ping! A pong reply has already been automatically sent.")
 
 def on_pong(wsapp, message):
-    """处理pong消息"""
-    logger.debug("收到pong消息")
-
-def get_connection_status():
-    """获取连接状态信息"""
-    global ws, ws_connected, reconnect_attempt
-    
-    status = {
-        "connected": ws_connected,
-        "ws_object": ws is not None,
-        "reconnect_attempts": reconnect_attempt,
-        "heartbeat_active": heartbeat_thread is not None and heartbeat_thread.is_alive()
-    }
-    
-    if ws and hasattr(ws, 'sock') and ws.sock:
-        try:
-            status["socket_state"] = "connected" if ws.sock.connected else "disconnected"
-        except:
-            status["socket_state"] = "unknown"
-    else:
-        status["socket_state"] = "no_socket"
-    
-    return status
-
-def log_connection_status():
-    """记录连接状态"""
-    status = get_connection_status()
-    logger.info(f"连接状态: {status}")
+    print("Got a pong! No need to respond")
 
 
 if __name__ == "__main__":
