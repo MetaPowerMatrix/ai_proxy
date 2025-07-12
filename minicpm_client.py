@@ -52,9 +52,9 @@ def base64_to_pcm(base64_audio_data):
             pcm_array = np.frombuffer(pcm_data, dtype=dtype)
 
             # 如果sample_rate不是16000，则重采样到16000
-            if sample_rate != 16000:
-                pcm_array = librosa.resample(pcm_array, orig_sr=sample_rate, target_sr=16000)
-                sample_rate = 16000
+            # if sample_rate != 16000:
+            #     pcm_array = librosa.resample(pcm_array, orig_sr=sample_rate, target_sr=16000)
+            #     sample_rate = 16000
             
             # 如果是多声道，重塑数组
             if channels > 1:
@@ -193,8 +193,11 @@ class MiniCPMClient:
                                     pcm_data = base64_to_pcm(audio_base64)
                                     print(f"pcm_data: {pcm_data}")
                                     # 正确检查pcm_data是否有效
-                                    if (pcm_data and pcm_data[0] is not None and 
-                                        hasattr(pcm_data[0], '__len__') and len(pcm_data[0]) > 0):
+                                    if (pcm_data and 
+                                        len(pcm_data) >= 3 and  # 确保返回了三元组
+                                        pcm_data[0] is not None and 
+                                        hasattr(pcm_data[0], 'shape') and  # 确保是NumPy数组
+                                        pcm_data[0].size > 0):  # 使用size检查数组是否为空
                                         print(f"📦 收到音频片段: {len(audio_base64)} 字符")
                                         on_audio_done(pcm_data[0])
 
