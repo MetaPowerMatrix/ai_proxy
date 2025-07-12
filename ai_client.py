@@ -513,7 +513,6 @@ def start_websocket():
         ws.run_forever(
             ping_interval=60,  # 每60秒发送ping
             ping_timeout=10,   # ping超时时间
-            sockopt=[(websocket.socket.SOL_SOCKET, websocket.socket.SO_KEEPALIVE, 1)],
             sslopt={"check_hostname": False, "cert_reqs": websocket.ssl.CERT_NONE} if WS_URL.startswith('wss') else None
         )
         
