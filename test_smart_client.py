@@ -304,6 +304,8 @@ def test_chunked_audio_processing():
     print(f"   ⏱️ 总耗时: {total_time:.1f}s")
     print(f"   📈 平均每片段: {total_time/len(chunks):.2f}s")
     
+    response2 = client.send_completions_request()
+    print(f"completions响应头: {dict(response2.headers)}")
     # 如果需要获取最终结果，可以调用completions
     # if successful_chunks > 0:
     #     print(f"\n4️⃣ 获取最终处理结果...")
