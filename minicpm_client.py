@@ -151,7 +151,7 @@ class MiniCPMClient:
         response2 = self.send_completions_request()
         print(f"completions响应头: {dict(response2.headers)}")
 
-        return response.json(), response2.json()
+        return response.json()
         
 
     def send_completions_request(self) -> requests.Response:
