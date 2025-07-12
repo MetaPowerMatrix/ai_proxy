@@ -13,18 +13,6 @@ import tempfile
 import base64
 from minicpm_client import MiniCPMClient
 
-# 全局客户端实例
-global_client = None
-
-def get_global_client():
-    """获取全局客户端实例"""
-    global global_client
-    if global_client is None:
-        global_client = MiniCPMClient()
-        print(f"🆔 创建全局客户端，UID: {global_client.uid}")
-    return global_client
-
-
 def analyze_audio_quality(audio_file):
     """分析音频质量，返回关键指标"""
     try:
@@ -174,237 +162,6 @@ def init_with_custom_vad_threshold(client, audio_file, vad_threshold):
         print(f"❌ 自定义VAD阈值初始化失败: {e}")
         raise
 
-
-def test_smart_audio_processing():
-    """测试智能音频处理"""
-    
-    print("=" * 70)
-    print("测试智能MiniCPM客户端 - 增强版VAD优化")
-    print("=" * 70)
-    
-    # 检查音频文件
-    audio_file = "test_audio.wav"
-    if not os.path.exists(audio_file):
-        print(f"❌ 音频文件 {audio_file} 不存在")
-        return
-    
-    # 使用全局客户端
-    client = get_global_client()
-    print(f"🆔 使用全局客户端UID: {client.uid}")
-    
-    # 1. 健康检查
-    print("\n1️⃣ 检查服务状态...")
-    try:
-        health_response = client.check_service_status()
-        if health_response.status_code != 200:
-            print("❌ MiniCPM服务不可用")
-            return
-        print("✅ MiniCPM服务正常")
-    except Exception as e:
-        print(f"❌ 健康检查失败: {e}")
-        return
-    
-    # 1.5. 自适应VAD阈值初始化
-    print("\n1.5️⃣ 自适应VAD阈值初始化...")
-    try:
-        init_result = init_with_adaptive_vad(client, audio_file)
-        print("✅ 自适应初始化成功")
-    except Exception as e:
-        print(f"❌ 自适应初始化失败: {e}")
-        print("🔄 尝试使用低阈值重试...")
-        try:
-            init_result = init_with_custom_vad_threshold(client, audio_file, 0.3)
-            print("✅ 低阈值初始化成功")
-        except Exception as e2:
-            print(f"❌ 低阈值初始化也失败: {e2}")
-            return
-    
-    # 2. 测试智能音频处理
-    print("\n2️⃣ 开始智能音频处理...")
-    print("🧠 智能逻辑:")
-    print("   - 发送音频到stream接口")
-    print("   - 检查Stream响应状态")
-    print("   - 如果已完成且有音频→直接返回")
-    print("   - 如果已完成但无音频→尝试简短completions")
-    print("   - 如果未完成→执行完整流程")
-    
-    try:
-        start_time = time.time()
-        
-        audio_chunks, text_response = client.stream_audio_processing(audio_file)
-        
-        end_time = time.time()
-        total_time = end_time - start_time
-        
-        print(f"\n📊 智能处理结果 (总耗时: {total_time:.1f}s):")
-        
-        if audio_chunks is None and text_response is None:
-            print("❌ 智能处理失败")
-            print("🔧 可能的解决方案:")
-            print("   1. 检查音频文件是否包含清晰的语音")
-            print("   2. 尝试调整VAD阈值")
-            print("   3. 确保音频文件格式正确")
-            print("   4. 检查音频时长是否足够（建议>2秒）")
-            return
-        
-        # 分析结果
-        audio_count = len(audio_chunks) if audio_chunks else 0
-        text_length = len(text_response) if text_response else 0
-        
-        print(f"   📦 收到音频片段数量: {audio_count}")
-        print(f"   📝 收到文本回复长度: {text_length}")
-        print(f"   📄 文本内容: {text_response if text_response else '无'}")
-        
-        # 分析处理效率
-        if total_time < 10:
-            print(f"   ⚡ 快速处理 ({total_time:.1f}s) - 可能使用了智能路径")
-        elif total_time < 30:
-            print(f"   ⏱️ 中等处理时间 ({total_time:.1f}s) - 部分优化生效")
-        else:
-            print(f"   🐌 较长处理时间 ({total_time:.1f}s) - 使用了完整流程")
-        
-        # 保存音频结果
-        if audio_chunks and audio_count > 0:
-            try:
-                from minicpm_client import merge_pcm_chunks, save_pcm_as_wav
-                merged_pcm = merge_pcm_chunks([chunk[0] for chunk in audio_chunks])
-                if merged_pcm is not None:
-                    output_file = "output_smart.wav"
-                    save_pcm_as_wav(merged_pcm, 16000, 1, output_file)
-                    print(f"   💾 音频已保存为 {output_file}")
-            except Exception as e:
-                print(f"   ⚠️ 保存音频失败: {e}")
-        
-        # 评估智能处理效果
-        if audio_count > 0 or text_length > 0:
-            print("\n🎉 智能处理成功!")
-            efficiency = "高效" if total_time < 15 else "标准"
-            print(f"✅ 处理效率: {efficiency}")
-        else:
-            print("\n⚠️ 处理完成但无有效数据")
-        
-    except Exception as e:
-        print(f"\n❌ 智能处理过程中出错: {e}")
-        import traceback
-        traceback.print_exc()
-
-
-def test_stream_response_analysis():
-    """测试Stream响应分析"""
-    print("\n" + "=" * 70)
-    print("Stream响应分析测试")
-    print("=" * 70)
-    
-    # 使用全局客户端
-    client = get_global_client()
-    print(f"🆔 使用全局客户端UID: {client.uid}")
-    
-    # 1. 加载音频
-    print("1️⃣ 加载音频文件...")
-    try:
-        audio_base64 = client.load_audio_file("test_audio.wav")
-        print(f"✅ 音频加载成功: {len(audio_base64)} 字符")
-    except Exception as e:
-        print(f"❌ 音频加载失败: {e}")
-        return
-    
-    # 2. 分析Stream响应
-    print("\n2️⃣ 分析Stream响应...")
-    try:
-        stream_result = client.send_audio_with_completion_flag(audio_base64, end_of_stream=True)
-        
-        print(f"📋 Stream结果分析:")
-        print(f"   成功状态: {stream_result.get('success', False)}")
-        
-        if stream_result.get('success'):
-            result = stream_result.get('result')
-            if result and isinstance(result, dict):
-                print(f"   返回数据: {result}")
-                
-                # 分析choices
-                choices = result.get('choices', {})
-                if isinstance(choices, dict):
-                    print(f"   完成状态: {choices.get('finish_reason', 'unknown')}")
-                    print(f"   内容: {choices.get('content', 'none')}")
-                    
-                    if 'audio' in choices:
-                        print(f"   🎵 包含音频数据: {len(choices['audio'])} 字符")
-                    else:
-                        print(f"   📝 无音频数据")
-                    
-                    # 预测处理路径
-                    if choices.get('finish_reason') == 'done':
-                        if 'audio' in choices:
-                            print("   🎯 预测路径: 直接返回Stream中的音频")
-                        else:
-                            print("   🎯 预测路径: 尝试简短completions请求")
-                    else:
-                        print("   🎯 预测路径: 执行完整处理流程")
-                        
-            else:
-                print(f"   ⚠️ 无效的返回数据格式")
-        else:
-            error = stream_result.get('error', 'unknown')
-            print(f"   ❌ Stream请求失败: {error}")
-            
-    except Exception as e:
-        print(f"❌ Stream响应分析失败: {e}")
-
-
-def test_different_scenarios():
-    """测试不同场景下的智能处理"""
-    print("\n" + "=" * 70)
-    print("多场景智能处理测试")
-    print("=" * 70)
-    
-    scenarios = [
-        {"name": "标准处理", "end_of_stream": True},
-        {"name": "分段处理", "end_of_stream": False},
-    ]
-    
-    # 使用全局客户端，保持同一个UID
-    client = get_global_client()
-    print(f"🆔 使用全局客户端UID: {client.uid}")
-    
-    for i, scenario in enumerate(scenarios, 1):
-        print(f"\n{i}️⃣ 场景测试: {scenario['name']}")
-        
-        try:
-            audio_file = "test_audio.wav"
-            if not os.path.exists(audio_file):
-                print(f"   ❌ 音频文件 {audio_file} 不存在")
-                continue
-            
-            print(f"   🔄 执行场景: {scenario['name']}")
-            print(f"   📊 使用相同UID: {client.uid}")
-            
-            audio_base64 = client.load_audio_file(audio_file)
-            
-            stream_result = client.send_audio_with_completion_flag(
-                audio_base64, 
-                end_of_stream=scenario['end_of_stream']
-            )
-            
-            if stream_result.get('success'):
-                result = stream_result.get('result', {})
-                choices = result.get('choices', {})
-                
-                print(f"   ✅ Stream成功")
-                print(f"   完成状态: {choices.get('finish_reason', 'none')}")
-                print(f"   是否有音频: {'是' if stream_result.get('has_audio') else '否'}")
-                
-                # 根据结果预测性能
-                if choices.get('finish_reason') == 'done':
-                    print(f"   🚀 预期高效处理")
-                else:
-                    print(f"   ⏳ 预期标准处理")
-            else:
-                print(f"   ❌ Stream失败: {stream_result.get('error')}")
-                
-        except Exception as e:
-            print(f"   💥 场景测试异常: {e}")
-
-
 def split_audio_into_chunks(audio_file, num_chunks=20):
     """将音频文件分成指定数量的片段"""
     try:
@@ -470,23 +227,19 @@ def test_chunked_audio_processing():
     print("=" * 70)
     
     # 检查音频文件
+    reference_audio_file = "reference_audio.wav"
+    if not os.path.exists(reference_audio_file):
+        print(f"❌ 音频文件 {reference_audio_file} 不存在")
+        return
+    
     audio_file = "test_audio.wav"
     if not os.path.exists(audio_file):
         print(f"❌ 音频文件 {audio_file} 不存在")
         return
+
+    client = MiniCPMClient()
+    init_with_custom_vad_threshold(client, reference_audio_file, 0.8)
     
-    # 使用全局客户端
-    client = get_global_client()
-    print(f"🆔 使用全局客户端UID: {client.uid}")
-    
-    # 1. 分析音频并分片
-    print("\n1️⃣ 分析音频质量并分片...")
-    quality_info = analyze_audio_quality(audio_file)
-    if quality_info:
-        print(f"📊 原始音频信息:")
-        print(f"   时长: {quality_info['duration']:.2f}s")
-        print(f"   采样率: {quality_info['sample_rate']}Hz")
-        print(f"   总帧数: {quality_info['frames']}")
     
     # 分片处理
     chunks = split_audio_into_chunks(audio_file, num_chunks=20)
@@ -570,7 +323,7 @@ def test_chunked_audio_processing():
             # 可以选择调用stream_audio_processing获取最终合并结果
             # 或者等待服务端自动合并处理
             
-            final_audio_chunks, final_text = client.stream_audio_processing(audio_file)
+            final_audio_chunks, final_text = client.stream_audio_processing()
             
             if final_audio_chunks or final_text:
                 print(f"✅ 获取到最终结果:")
@@ -617,15 +370,6 @@ def main():
     print("🚀 开始智能MiniCPM客户端测试 - VAD优化版")
     print("📝 注意: 整个测试过程将使用同一个UID")
     
-    # 测试1: 智能音频处理
-    test_smart_audio_processing()
-    
-    # 测试2: Stream响应分析
-    test_stream_response_analysis()
-    
-    # 测试3: 多场景测试
-    test_different_scenarios()
-    
     # 测试4: 分片音频处理 (20片段)
     test_chunked_audio_processing()
     
@@ -633,15 +377,7 @@ def main():
     print("🎯 智能处理总结")
     print("=" * 70)
     print("智能优化特性:")
-    print("1. ✅ 基于Stream响应的智能路径选择")
-    print("2. ✅ 自动检测处理完成状态")
-    print("3. ✅ 避免不必要的completions请求")
-    print("4. ✅ 兼容多种响应格式")
-    print("5. ✅ 显著减少处理时间")
-    print("6. ✅ 全程使用同一个UID和Session")
-    print("7. ✅ 自适应VAD阈值优化")
-    print("8. ✅ 音频质量分析和诊断")
-    print("9. ✅ 音频分片发送（20片段）")
+    print("1. ✅ 音频分片发送（20片段）")
     print("\n💡 智能处理应该解决超时问题并提高效率!")
     print("🔧 重要优化: 全程使用同一个UID，避免session切换问题!")
     print("🎙️ VAD优化: 根据音频质量自动调整VAD阈值，解决'vad_sequence insufficient'问题!")
