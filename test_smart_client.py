@@ -225,6 +225,8 @@ def test_chunked_audio_processing():
     print("\n" + "=" * 70)
     print("分片音频处理测试 - 20片段发送")
     print("=" * 70)
+    final_audio_chunks = []
+    final_text = []
     
     # 检查音频文件
     reference_audio_file = "reference_audio.wav"
@@ -246,11 +248,6 @@ def test_chunked_audio_processing():
     if not chunks:
         print("❌ 音频分片失败")
         return
-    
-    print(f"✅ 成功分成 {len(chunks)} 个片段")
-    for i, chunk in enumerate(chunks[:3]):  # 显示前3个片段的信息
-        print(f"   片段{chunk['index']}: {chunk['size']}字节, {chunk['duration']:.3f}s")
-    print(f"   ... (总共{len(chunks)}个片段)")
     
     # 2. 逐个发送片段
     print(f"\n2️⃣ 开始分片发送处理...")
@@ -285,6 +282,11 @@ def test_chunked_audio_processing():
                 if text_content == 'success':
                     print(f"   ✅ 片段 {chunk['index']} 发送成功")
                     successful_chunks += 1
+                    _audio_chunks, _text = client.stream_audio_processing()
+                    if _audio_chunks:
+                        final_audio_chunks.extend(_audio_chunks)
+                    if _text:
+                        final_text.extend(_text)
                 else:
                     print(f"   ❌ 片段 {chunk['index']} 发送失败: {text_content}")
                     failed_chunks += 1
@@ -314,10 +316,6 @@ def test_chunked_audio_processing():
     if successful_chunks > 0:
         print(f"\n4️⃣ 获取最终处理结果...")
         try:
-            # 可以选择调用stream_audio_processing获取最终合并结果
-            # 或者等待服务端自动合并处理
-            
-            final_audio_chunks, final_text = client.stream_audio_processing()
             
             if final_audio_chunks or final_text:
                 print(f"✅ 获取到最终结果:")
