@@ -114,6 +114,49 @@ class MiniCPMClient:
         response = requests.get(f"{self.base_url}/health")
         return response
         
+    def send_audio_with_completion_flag(self, audio_data, end_of_stream=True):
+        """发送音频并明确标记是否为流的结束"""
+        stream_data = {
+            "messages": [{
+                "role": "user",
+                "content": [{
+                    "type": "input_audio", 
+                    "input_audio": {
+                        "data": audio_data,
+                        "format": "wav",
+                        "timestamp": str(int(time.time() * 1000))
+                    }
+                }]
+            }],
+            "end_of_stream": end_of_stream  # 明确标记流结束
+        }
+        
+        headers = {
+            "uid": self.uid,
+            "Content-Type": "application/json"
+        }
+        
+        print(f"发送音频到stream接口 (end_of_stream={end_of_stream})")
+        print(f"audio_data bytes: {len(audio_data)}")
+        
+        response = self.session.post(
+            f"{self.base_url}/api/v1/stream",
+            headers=headers,
+            json=stream_data,
+            timeout=30
+        )
+        print(f"Stream response: {response.json()}")
+        print(f"Stream 响应头: {dict(response.headers)}")        
+        time.sleep(1)
+
+        # 2. 发送completions请求获取生成的音频
+        response = self.send_completions_request()
+        print(f"completions响应头 2: {dict(response.headers)}")        
+        time.sleep(1)
+
+        return response
+        
+
     def send_completions_request(self) -> requests.Response:
         """发送completions请求获取SSE流（旧版本，保留兼容性）"""
         headers = {

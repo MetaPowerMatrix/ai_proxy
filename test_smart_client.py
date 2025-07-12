@@ -258,7 +258,6 @@ def test_chunked_audio_processing():
     
     successful_chunks = 0
     failed_chunks = 0
-    all_audio_chunks = []
     all_text_parts = []
     
     for i, chunk in enumerate(chunks):
