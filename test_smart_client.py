@@ -258,7 +258,6 @@ def test_chunked_audio_processing():
     
     successful_chunks = 0
     failed_chunks = 0
-    all_text_parts = []
     
     for i, chunk in enumerate(chunks):
         print(f"\n📤 发送片段 {chunk['index']}/{len(chunks)}")
@@ -274,31 +273,27 @@ def test_chunked_audio_processing():
                 end_of_stream=is_last_chunk
             )
             
-            if stream_result.get('success'):
-                print(f"   ✅ 片段 {chunk['index']} 发送成功")
-                successful_chunks += 1
                 
-                # 收集结果
-                result = stream_result.get('result', {})
-                choices = result.get('choices', {})
-                
-                if 'audio' in choices:
-                    print(f"   🎵 收到音频数据: {len(choices['audio'])} 字符")
-                    # 这里可以收集音频片段用于后续合并
-                
-                if choices.get('content'):
-                    text_content = choices['content']
-                    all_text_parts.append(text_content)
-                    print(f"   📝 收到文本: {text_content[:50]}...")
-                
-                # 检查完成状态
-                if choices.get('finish_reason') == 'done':
-                    print(f"   🏁 片段 {chunk['index']} 标记为完成")
+            # 收集结果
+            choices = stream_result.get('choices', {})
+            
+            if 'audio' in choices:
+                print(f"   🎵 收到音频数据: {len(choices['audio'])} 字符")
+            
+            if choices.get('content'):
+                text_content = choices['content']
+                if text_content == 'success':
+                    print(f"   ✅ 片段 {chunk['index']} 发送成功")
+                    successful_chunks += 1
+                else:
+                    print(f"   ❌ 片段 {chunk['index']} 发送失败: {text_content}")
+                    failed_chunks += 1
+
+            
+            # 检查完成状态
+            if choices.get('finish_reason') == 'done':
+                print(f"   🏁 片段 {chunk['index']} 标记为完成")
                     
-            else:
-                print(f"   ❌ 片段 {chunk['index']} 发送失败: {stream_result.get('error')}")
-                failed_chunks += 1
-                
         except Exception as e:
             print(f"   💥 片段 {chunk['index']} 处理异常: {e}")
             failed_chunks += 1

@@ -147,14 +147,8 @@ class MiniCPMClient:
         )
         print(f"Stream response: {response.json()}")
         print(f"Stream 响应头: {dict(response.headers)}")        
-        time.sleep(1)
 
-        # 2. 发送completions请求获取生成的音频
-        response = self.send_completions_request()
-        print(f"completions响应头 2: {dict(response.headers)}")        
-        time.sleep(1)
-
-        return response
+        return response.json()
         
 
     def send_completions_request(self) -> requests.Response:
