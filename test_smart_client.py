@@ -101,6 +101,7 @@ def test_chunked_audio_processing():
     
     response2 = client.send_completions_request()
     print(f"completions响应头: {dict(response2.headers)}")
+    time.sleep(20)
     # 如果需要获取最终结果，可以调用completions
     # if successful_chunks > 0:
     #     print(f"\n4️⃣ 获取最终处理结果...")
