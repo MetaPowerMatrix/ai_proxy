@@ -105,9 +105,11 @@ class MiniCPMClient:
         self.session = requests.Session()
         self.uid = f"proxy_client_001"
         self.responses = []
-        self.audio_chunks = []
-        self.text_chunks = []
-    
+        self.session_id = None
+
+    def set_session_id(self, session_id):
+        self.session_id = session_id
+
     def load_audio_file(self, file_path):
         """加载音频文件并转换为base64"""
         with open(file_path, "rb") as f:
@@ -158,7 +160,7 @@ class MiniCPMClient:
 
         return response.json()
         
-    def start_completions_listener(self):
+    def start_completions_listener(self, on_audio_done, on_text_done):
         """启动completions接口监听"""
         def listen():
             try:
@@ -185,12 +187,12 @@ class MiniCPMClient:
                                 if audio_base64:
                                     pcm_data = base64_to_pcm(audio_base64)
                                     if pcm_data[0] is not None:  # 检查解析是否成功
-                                        self.audio_chunks.append(pcm_data)
+                                        on_audio_done(pcm_data)
                                         print(f"📦 收到音频片段: {len(audio_base64)} 字符")
 
                                 if text and text != '\n<end>':
                                     print(f"💬 收到文本: {text}")
-                                    self.text_chunks.append(text)
+                                    on_text_done(text)
                         
                             except json.JSONDecodeError:
                                 print(f"原始数据: {line_text}")

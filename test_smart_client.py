@@ -9,6 +9,11 @@ import os
 import time
 from minicpm_client import MiniCPMClient
 
+def on_audio_done(audio_chunks):
+    pass
+
+def on_text_done(text_chunks):
+    pass
 
 def test_chunked_audio_processing():
     """测试分片音频处理"""
@@ -29,7 +34,7 @@ def test_chunked_audio_processing():
 
     client = MiniCPMClient()
     client.init_with_adaptive_vad(reference_audio_file)
-    client.start_completions_listener()
+    client.start_completions_listener(on_audio_done=on_audio_done, on_text_done=on_text_done)
 
     # 分片处理
     chunks = client.split_audio_into_chunks(audio_file, num_chunks=20)
