@@ -193,9 +193,7 @@ class MiniCPMClient:
                                     pcm_data = base64_to_pcm(audio_base64)
                                     print(f"pcm_data: {pcm_data}")
                                     # 正确检查pcm_data是否有效
-                                    if (pcm_data and 
-                                        len(pcm_data) >= 3 and  # 确保返回了三元组
-                                        pcm_data[0] is not None and 
+                                    if (pcm_data[0] is not None and 
                                         hasattr(pcm_data[0], 'shape') and  # 确保是NumPy数组
                                         pcm_data[0].size > 0):  # 使用size检查数组是否为空
                                         print(f"📦 收到音频片段: {len(audio_base64)} 字符")
