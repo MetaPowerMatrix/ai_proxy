@@ -225,8 +225,6 @@ def test_chunked_audio_processing():
     print("\n" + "=" * 70)
     print("分片音频处理测试 - 20片段发送")
     print("=" * 70)
-    final_audio_chunks = []
-    final_text = []
     
     # 检查音频文件
     reference_audio_file = "reference_audio.wav"
@@ -282,16 +280,9 @@ def test_chunked_audio_processing():
                 if text_content == 'success':
                     print(f"   ✅ 片段 {chunk['index']} 发送成功")
                     successful_chunks += 1
-                    if successful_chunks >= 6:
-                        _audio_chunks, _text = client.stream_audio_processing()
-                        if _audio_chunks:
-                            final_audio_chunks.extend(_audio_chunks)
-                        if _text:
-                            final_text.extend(_text)
                 else:
                     print(f"   ❌ 片段 {chunk['index']} 发送失败: {text_content}")
                     failed_chunks += 1
-
             
             # 检查完成状态
             if choices.get('finish_reason') == 'done':
@@ -317,6 +308,7 @@ def test_chunked_audio_processing():
     if successful_chunks > 0:
         print(f"\n4️⃣ 获取最终处理结果...")
         try:
+            final_audio_chunks, final_text = client.stream_audio_processing()
             
             if final_audio_chunks or final_text:
                 print(f"✅ 获取到最终结果:")
