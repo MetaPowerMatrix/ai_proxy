@@ -85,7 +85,8 @@ def check_service_status(reference_audio_file):
             response = minicpm_client.check_service_status()
             if response.status_code == 200:
                 logger.info(f"MiniCPM服务状态: {response.json()}")
-                minicpm_client.init_with_chinese_voice(reference_audio_file)
+                minicpm_client.init_with_adaptive_vad(reference_audio_file)
+                minicpm_client.start_completions_listener()
             else:
                 logger.error(f"MiniCPM服务状态检查失败: {response.status_code}")
                 return False
@@ -315,7 +316,7 @@ def process_audio(raw_audio_data, session_id):
         if USE_MINICPM:
             global minicpm_client
             logger.info("使用MiniCPM模式处理音频...")
-            audio_resp, txt_resp = minicpm_client.stream_audio_processing(wav_file_path)
+            audio_resp, txt_resp = minicpm_client.test_chunked_audio_processing(wav_file_path)
             return audio_resp, txt_resp
 
         # 常规模式：语音转文字 -> 聊天 -> 文字转语音
