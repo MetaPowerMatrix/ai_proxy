@@ -330,7 +330,7 @@ class MiniCPMClient:
             print(f"💡 建议VAD阈值: {suggested_threshold:.2f}")
             
             # 使用建议的阈值初始化
-            return self.init_with_custom_vad_threshold(audio_file, suggested_threshold)
+            return self.init_with_custom_vad_threshold(audio_file, 1 - suggested_threshold)
         else:
             print("⚠️ 无法分析音频质量，使用默认阈值")
             return self.init_with_chinese_voice(audio_file)
