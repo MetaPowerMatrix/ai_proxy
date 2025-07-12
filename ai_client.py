@@ -464,7 +464,7 @@ def on_message(ws, message):
 
 def start_websocket():
     global ws, reference_audio_file
-    
+
     """启动WebSocket连接"""
     ws = websocket.WebSocketApp(
         WS_URL,
@@ -478,12 +478,6 @@ def start_websocket():
     
     # 启动心跳线程
     heartbeat_thread = start_heartbeat(ws)
-
-    # 检查服务状态
-    if not check_service_status(reference_audio_file):
-        logger.error("服务状态检查失败，请检查服务是否正常运行")
-        return
-
 
     # 设置WebSocket选项
     ws.run_forever(
@@ -563,6 +557,10 @@ def main():
     global reference_audio_file
     reference_audio_file = AUDIO_CATEGORIES.get(args.voice_category, AUDIO_CATEGORIES["御姐配音暧昧"])
 
+    # 检查服务状态
+    if not check_service_status(reference_audio_file):
+        logger.error("服务状态检查失败，请检查服务是否正常运行")
+        return
 
     # 打印启动信息
     logger.info("=" * 50)
