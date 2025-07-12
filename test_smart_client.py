@@ -282,11 +282,12 @@ def test_chunked_audio_processing():
                 if text_content == 'success':
                     print(f"   ✅ 片段 {chunk['index']} 发送成功")
                     successful_chunks += 1
-                    _audio_chunks, _text = client.stream_audio_processing()
-                    if _audio_chunks:
-                        final_audio_chunks.extend(_audio_chunks)
-                    if _text:
-                        final_text.extend(_text)
+                    if successful_chunks >= 6:
+                        _audio_chunks, _text = client.stream_audio_processing()
+                        if _audio_chunks:
+                            final_audio_chunks.extend(_audio_chunks)
+                        if _text:
+                            final_text.extend(_text)
                 else:
                     print(f"   ❌ 片段 {chunk['index']} 发送失败: {text_content}")
                     failed_chunks += 1
