@@ -437,20 +437,19 @@ class MiniCPMClient:
             return []
 
 
-    def test_chunked_audio_processing(self, audio_file):
+    def test_chunked_audio_processing(self, audio_file, skip_chunked_audio=False):
         # 分片处理
-        chunks = self.split_audio_into_chunks(audio_file, num_chunks=10)
-        if not chunks:
-            print("❌ 音频分片失败")
-            return
+        if not skip_chunked_audio:
+            chunks = self.split_audio_into_chunks(audio_file, num_chunks=10)
+            if not chunks:
+                print("❌ 音频分片失败")
+                return
+        else:
+            chunks = [{"index": 1, "data": self.load_audio_file(audio_file), "size": len(audio_file), "duration": len(audio_file) / (16000 * 1 * 2)}]
         
-        # 2. 逐个发送片段
-        print(f"\n2️⃣ 开始分片发送处理...")
         start_time = time.time()
-        
         successful_chunks = 0
         failed_chunks = 0
-        
         for i, chunk in enumerate(chunks):
             try:
                 # 判断是否为最后一个片段
@@ -461,12 +460,10 @@ class MiniCPMClient:
                     chunk['data'], 
                     end_of_stream=is_last_chunk
                 )
-                
-                # 收集结果
                 choices = stream_result.get('choices', {})
                 
-                if 'audio' in choices:
-                    print(f"   🎵 收到音频数据: {len(choices['audio'])} 字符")
+                # if 'audio' in choices:
+                #     print(f"   🎵 收到音频数据: {len(choices['audio'])} 字符")
                 
                 if choices.get('content'):
                     text_content = choices['content']
@@ -476,8 +473,8 @@ class MiniCPMClient:
                         failed_chunks += 1
                 
                 # 检查完成状态
-                if choices.get('finish_reason') == 'done':
-                    print(f"   🏁 片段 {chunk['index']} 标记为完成")
+                # if choices.get('finish_reason') == 'done':
+                #     print(f"   🏁 片段 {chunk['index']} 标记为完成")
                         
             except Exception as e:
                 print(f"   💥 片段 {chunk['index']} 处理异常: {e}")
@@ -489,19 +486,11 @@ class MiniCPMClient:
         end_time = time.time()
         total_time = end_time - start_time
         
-        # 3. 处理结果汇总
-        print(f"\n3️⃣ 分片发送完成统计:")
-        print(f"   📊 发送统计: 成功 {successful_chunks}/{len(chunks)}, 失败 {failed_chunks}")
-        print(f"   ⏱️ 总耗时: {total_time:.1f}s")
-        print(f"   📈 平均每片段: {total_time/len(chunks):.2f}s")
-        
         response2 = self.send_completions_request()
-        print(f"completions响应头: {dict(response2.headers)}")
+        # print(f"completions响应头: {dict(response2.headers)}")
 
-        # 性能分析
         success_rate = (successful_chunks / len(chunks)) * 100 if chunks else 0
-        print(f"\n📈 性能分析:")
-        print(f"   成功率: {success_rate:.1f}%")
+        print(f"成功率: {success_rate:.1f}% 总耗时: {total_time:.1f}s")
         
         if success_rate >= 90:
             print(f"   🎉 优秀! 分片发送非常稳定")
@@ -509,9 +498,5 @@ class MiniCPMClient:
             print(f"   ✅ 良好! 大部分片段发送成功")
         else:
             print(f"   ⚠️ 需要优化! 发送成功率较低")
-            print(f"   🔧 建议:")
-            print(f"      - 检查网络连接")
-            print(f"      - 增加片段间延迟")
-            print(f"      - 减少分片数量")
         
         return None, None

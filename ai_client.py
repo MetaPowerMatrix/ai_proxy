@@ -354,7 +354,7 @@ def process_audio(raw_audio_data, session_id):
         if USE_MINICPM:
             global minicpm_client
             logger.info("使用MiniCPM模式处理音频...")
-            audio_resp, txt_resp = minicpm_client.test_chunked_audio_processing(wav_file_path)
+            audio_resp, txt_resp = minicpm_client.test_chunked_audio_processing(wav_file_path, skip_chunked_audio=True)
             return audio_resp, txt_resp
 
         # 常规模式：语音转文字 -> 聊天 -> 文字转语音
@@ -445,8 +445,7 @@ def on_message(ws, message):
                 try:
                     # 将字节转换为UUID字符串
                     session_id = uuid.UUID(bytes=session_id_bytes).hex
-                    logger.info(f"收到音频数据: 会话ID = {session_id}, 大小 = {len(raw_audio)} 字节")
-                    
+                    # logger.info(f"收到音频数据: 会话ID = {session_id}, 大小 = {len(raw_audio)} 字节")
                     audio_response, text_response = process_audio(raw_audio, session_id)
                     
                     # 发送音频回复 - 分块发送
