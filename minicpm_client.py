@@ -140,7 +140,7 @@ class MiniCPMClient:
                     }
                 }]
             }],
-            "end_of_stream": end_of_stream  # 明确标记流结束
+            "end_of_stream": False  # 明确标记流结束
         }
         
         headers = {
@@ -148,8 +148,8 @@ class MiniCPMClient:
             "Content-Type": "application/json"
         }
         
-        print(f"发送音频到stream接口 (end_of_stream={end_of_stream})")
-        print(f"audio_data bytes: {len(audio_data)}")
+        # print(f"发送音频到stream接口 (end_of_stream={end_of_stream})")
+        # print(f"audio_data bytes: {len(audio_data)}")
         
         response = self.session.post(
             f"{self.base_url}/api/v1/stream",
@@ -157,8 +157,8 @@ class MiniCPMClient:
             json=stream_data,
             timeout=30
         )
-        print(f"Stream response: {response.json()}")
-        print(f"Stream 响应头: {dict(response.headers)}")        
+        # print(f"Stream response: {response.json()}")
+        # print(f"Stream 响应头: {dict(response.headers)}")        
 
         # response2 = self.send_completions_request()
         # print(f"completions响应头: {dict(response2.headers)}")
