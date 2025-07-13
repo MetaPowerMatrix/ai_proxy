@@ -439,7 +439,7 @@ class MiniCPMClient:
 
     def test_chunked_audio_processing(self, audio_file):
         # 分片处理
-        chunks = self.split_audio_into_chunks(audio_file, num_chunks=20)
+        chunks = self.split_audio_into_chunks(audio_file, num_chunks=10)
         if not chunks:
             print("❌ 音频分片失败")
             return
