@@ -395,6 +395,220 @@ class VoiceClient:
         finally:
             await self.stop_call()
 
+    async def start_audio_proxy(self, external_websocket, config_data: Optional[Dict] = None):
+        """
+        音频代理模式：从外部websocket接收音频数据，转发给大模型，然后将回复转发回去
+        
+        Args:
+            external_websocket: 外部websocket连接，用于接收音频数据和发送回复
+            config_data: 可选的配置数据
+        """
+        try:
+            # 初始化
+            self.stop_requested = False
+            self.is_calling = True
+            self.audio_chunks = []
+            self.external_ws = external_websocket
+            
+            # 清空播放队列
+            while not self.audio_play_queue.empty():
+                try:
+                    self.audio_play_queue.get_nowait()
+                except queue.Empty:
+                    break
+            
+            # 停止之前的会话
+            await self.stop_message()
+            
+            # 上传配置
+            if not await self.upload_config(config_data):
+                logger.error("Failed to upload config")
+                return
+            
+            logger.info("Starting audio proxy mode")
+            
+            # 启动WebSocket发送、SSE接收和外部音频处理
+            await asyncio.gather(
+                self.websocket_sender_proxy(),
+                self.sse_receiver_proxy(),
+                self.external_audio_receiver()
+            )
+            
+        except Exception as e:
+            logger.error(f"Error during audio proxy: {e}")
+        finally:
+            await self.stop_call()
+
+    async def external_audio_receiver(self):
+        """从外部websocket接收音频数据"""
+        try:
+            logger.info("External audio receiver started")
+            
+            while self.is_calling and not self.stop_requested:
+                try:
+                    # 接收外部websocket的音频数据
+                    message = await self.external_ws.receive()
+                    
+                    if "bytes" in message:
+                        # 接收到PCM音频数据
+                        pcm_data = message["bytes"]
+                        
+                        # 将PCM数据转换为numpy数组
+                        audio_chunk = np.frombuffer(pcm_data, dtype=np.int16)
+                        
+                        # 添加到音频缓冲区
+                        self.audio_chunks.extend(audio_chunk)
+                        
+                        logger.debug(f"Received audio chunk: {len(pcm_data)} bytes")
+                        
+                    elif "text" in message:
+                        # 处理文本消息（如果需要）
+                        try:
+                            data = json.loads(message["text"])
+                            logger.debug(f"Received text message: {data}")
+                        except json.JSONDecodeError:
+                            logger.warning("Failed to parse text message from external websocket")
+                    
+                except Exception as e:
+                    logger.error(f"Error receiving from external websocket: {e}")
+                    break
+                    
+        except Exception as e:
+            logger.error(f"External audio receiver error: {e}")
+
+    async def websocket_sender_proxy(self):
+        """WebSocket发送音频数据的协程（代理模式）"""
+        try:
+            ws_uri = f"{self.ws_url}/ws/stream?uid={self.uid}&service=minicpmo-server"
+            
+            async with websockets.connect(ws_uri) as websocket:
+                self.websocket = websocket
+                logger.info("WebSocket connected for proxy mode")
+                
+                while self.is_calling and not self.stop_requested:
+                    if len(self.audio_chunks) >= self.chunk_length:
+                        # 合并音频块
+                        merged_buffer = np.concatenate(self.audio_chunks[:self.chunk_length])
+                        chunk_audio = merged_buffer[:self.chunk_length]
+                        
+                        # 编码为base64
+                        base64_audio = self.encode_audio_to_wav_base64(chunk_audio)
+                        
+                        # 发送到后端
+                        message = {
+                            "uid": self.uid,
+                            "messages": [{
+                                "role": "user",
+                                "content": [{
+                                    "type": "input_audio",
+                                    "input_audio": {
+                                        "data": base64_audio,
+                                        "format": "wav",
+                                        "timestamp": str(int(time.time() * 1000))
+                                    }
+                                }]
+                            }]
+                        }
+                        
+                        await websocket.send(json.dumps(message))
+                        logger.debug("Audio chunk sent via WebSocket (proxy mode)")
+                        
+                        # 移除已发送的数据，保留剩余部分
+                        self.audio_chunks = self.audio_chunks[self.chunk_length:]
+                    
+                    await asyncio.sleep(0.1)  # 100ms检查间隔
+                    
+        except Exception as e:
+            logger.error(f"WebSocket sender proxy error: {e}")
+
+    async def sse_receiver_proxy(self):
+        """SSE接收模型响应的协程（代理模式）"""
+        try:
+            # 建立SSE连接
+            payload = {
+                "messages": [{
+                    "role": "user",
+                    "content": [{"type": "none"}]
+                }],
+                "stream": True
+            }
+            
+            headers = {
+                "Content-Type": "application/json",
+                "service": "minicpmo-server",
+                "uid": self.uid
+            }
+            
+            async with self.http_client.stream(
+                "POST",
+                f"{self.base_url}/api/v1/completions",
+                json=payload,
+                headers=headers
+            ) as response:
+                
+                if response.status_code != 200:
+                    logger.error(f"SSE connection failed: {response.status_code}")
+                    return
+                
+                logger.info("SSE connection established for proxy mode")
+                
+                async for line in response.aiter_lines():
+                    if self.stop_requested:
+                        break
+                        
+                    if line.startswith("data: "):
+                        try:
+                            data_str = line[6:]  # 移除"data: "前缀
+                            if data_str.strip():
+                                data = json.loads(data_str)
+                                await self.handle_sse_message_proxy(data)
+                        except json.JSONDecodeError:
+                            continue
+                            
+        except Exception as e:
+            logger.error(f"SSE receiver proxy error: {e}")
+
+    async def handle_sse_message_proxy(self, data: Dict[str, Any]):
+        """处理SSE消息（代理模式）"""
+        try:
+            choices = data.get("choices", [])
+            if not choices:
+                return
+                
+            choice = choices[0]
+            text = choice.get("text", "")
+            audio = choice.get("audio")
+            
+            # 处理文本（可选择是否转发给外部websocket）
+            if text and text != "<end>":
+                logger.info(f"AI response text: {text}")
+                # 可以选择发送文本回复给外部websocket
+                try:
+                    await self.external_ws.send_text(json.dumps({
+                        "type": "text",
+                        "content": text
+                    }))
+                except Exception as e:
+                    logger.error(f"Error sending text to external websocket: {e}")
+            
+            # 处理音频 - 转发给外部websocket
+            if audio:
+                audio_data = self.decode_audio_from_base64(audio)
+                if len(audio_data) > 0:
+                    try:
+                        # 将音频数据发送回外部websocket
+                        await self.external_ws.send_bytes(audio_data.tobytes())
+                        logger.debug(f"Audio data forwarded to external websocket: {len(audio_data)} samples")
+                    except Exception as e:
+                        logger.error(f"Error sending audio to external websocket: {e}")
+                    
+            # 检查是否结束
+            if text and "<end>" in text:
+                logger.info("Response completed (proxy mode)")
+                
+        except Exception as e:
+            logger.error(f"Error handling SSE message (proxy mode): {e}")
+
     async def stop_call(self):
         """停止语音通话"""
         try:
