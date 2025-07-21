@@ -358,7 +358,7 @@ class MiniCPMClient:
                                 "voice_clone_prompt": "你是一个AI助手。你能接受视频，音频和文本输入并输出语音和文本。模仿输入音频中的声音特征。",
                                 "assistant_prompt": "作为助手，你将使用这种声音风格说话。",
                                 "use_audio_prompt": 0,
-                                "use_optimized_vad": False,
+                                # "use_optimized_vad": True,
                                 "vad_threshold": 0.2,
                                 # "vad_threshold": vad_threshold,  # 使用自定义阈值
                                 "hd_video": False
@@ -442,7 +442,7 @@ class MiniCPMClient:
     def test_chunked_audio_processing(self, audio_file, skip_chunked_audio=False):
         # 分片处理
         if not skip_chunked_audio:
-            chunks = self.split_audio_into_chunks(audio_file, num_chunks=10)
+            chunks = self.split_audio_into_chunks(audio_file, num_chunks=5)
             if not chunks:
                 print("❌ 音频分片失败")
                 return
