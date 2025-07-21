@@ -140,7 +140,7 @@ class MiniCPMClient:
                     }
                 }]
             }],
-            "end_of_stream": False  # 明确标记流结束
+            "end_of_stream": end_of_stream  # 明确标记流结束
         }
         
         headers = {
@@ -359,8 +359,8 @@ class MiniCPMClient:
                                 "assistant_prompt": "作为助手，你将使用这种声音风格说话。",
                                 "use_audio_prompt": 0,
                                 # "use_optimized_vad": True,
-                                # "vad_threshold": 0.7,
-                                "vad_threshold": vad_threshold,  # 使用自定义阈值
+                                "vad_threshold": 0.7,
+                                # "vad_threshold": vad_threshold,  # 使用自定义阈值
                                 "hd_video": False
                             }
                         }
