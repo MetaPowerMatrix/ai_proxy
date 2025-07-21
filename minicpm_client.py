@@ -381,7 +381,7 @@ class MiniCPMClient:
             print(f"❌ 自定义VAD阈值初始化失败: {e}")
             raise
 
-    def split_audio_into_chunks(self, audio_file, num_chunks=20):
+    def split_audio_into_chunks(self, audio_file, num_chunks=2):
         """将音频文件分成指定数量的片段"""
         try:
             with wave.open(audio_file, 'rb') as wav_file:
@@ -442,7 +442,7 @@ class MiniCPMClient:
     def test_chunked_audio_processing(self, audio_file, skip_chunked_audio=False):
         # 分片处理
         if not skip_chunked_audio:
-            chunks = self.split_audio_into_chunks(audio_file, num_chunks=5)
+            chunks = self.split_audio_into_chunks(audio_file, num_chunks=6)
             if not chunks:
                 print("❌ 音频分片失败")
                 return
