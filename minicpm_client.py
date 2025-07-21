@@ -488,7 +488,7 @@ class MiniCPMClient:
         end_time = time.time()
         total_time = end_time - start_time
         
-        response2 = self.send_completions_request()
+        # response2 = self.send_completions_request()
         # print(f"completions响应头: {dict(response2.headers)}")
 
         success_rate = (successful_chunks / len(chunks)) * 100 if chunks else 0
