@@ -171,10 +171,22 @@ class MiniCPMClient:
                         try:
                             data = json.loads(event.data)
                             
+                            # 检查错误情况
+                            if 'error' in data:
+                                print(f"❌ 服务端错误: {data['error']}")
+                                continue
+                            
                             choice = data.get('choices', [{}])[0]
                             audio_base64 = choice.get('audio', '')
                             text = choice.get('text', '')
-                            
+                            finish_reason = choice.get('finish_reason', '')
+
+                            # 检查多种结束条件
+                            if (text == '\n<end>' or 
+                                finish_reason in ['stop', 'completed'] or 
+                                text.endswith('<end>')):
+                                print("🏁 检测到结束标志，停止接收")
+
                             if audio_base64:
                                 pcm_data = base64_to_pcm(audio_base64)
                                 if (hasattr(pcm_data[0], 'shape') and 
