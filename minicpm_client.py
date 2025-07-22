@@ -148,20 +148,12 @@ class MiniCPMClient:
             "Content-Type": "application/json"
         }
         
-        # print(f"发送音频到stream接口 (end_of_stream={end_of_stream})")
-        # print(f"audio_data bytes: {len(audio_data)}")
-        
         response = self.session.post(
             f"{self.base_url}/api/v1/stream",
             headers=headers,
             json=stream_data,
             timeout=30
         )
-        # print(f"Stream response: {response.json()}")
-        # print(f"Stream 响应头: {dict(response.headers)}")        
-
-        # response2 = self.send_completions_request()
-        # print(f"completions响应头: {dict(response2.headers)}")
 
         return response.json()
         
@@ -169,12 +161,13 @@ class MiniCPMClient:
         """启动completions接口监听"""
         def listen():
             try:
-                response = requests.post(
-                    f"{self.base_url}/completions",
-                    json={},
-                    headers={"uid": self.uid, "Accept": "text/event-stream"},
-                    stream=True
-                )
+                # response = requests.post(
+                #     f"{self.base_url}/completions",
+                #     json={},
+                #     headers={"uid": self.uid, "Accept": "text/event-stream"},
+                #     stream=True
+                # )
+                response = self.send_completions_request()
                 
                 print("✅ Completions连接建立")
                 for line in response.iter_lines():
@@ -212,7 +205,6 @@ class MiniCPMClient:
         self.completions_thread.start()
 
     def send_completions_request(self) -> requests.Response:
-        """发送completions请求获取SSE流（旧版本，保留兼容性）"""
         headers = {
             "uid": self.uid,
             "Accept": "text/event-stream",
@@ -358,7 +350,7 @@ class MiniCPMClient:
                                 "voice_clone_prompt": "你是一个AI助手。你能接受视频，音频和文本输入并输出语音和文本。模仿输入音频中的声音特征。",
                                 "assistant_prompt": "作为助手，你将使用这种声音风格说话。",
                                 "use_audio_prompt": 0,
-                                "use_optimized_vad": True,
+                                "use_optimized_vad": False,
                                 "vad_threshold": 0.7,
                                 # "vad_threshold": vad_threshold,  # 使用自定义阈值
                                 "hd_video": False
