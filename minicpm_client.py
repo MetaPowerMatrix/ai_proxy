@@ -12,6 +12,7 @@ import threading
 import os
 import tempfile
 
+
 def base64_to_pcm(base64_audio_data):
     """将base64音频数据解码为PCM数据"""
     
@@ -156,27 +157,70 @@ class MiniCPMClient:
         )
 
         return response.json()
+
+    def start_completions_listener_with_sse(self, on_audio_done, on_text_done):
+        """启动SSE流completions接口监听"""
+        def listen():
+            try:
+                response = self.send_completions_request()
+                print("✅ SSE Completions连接建立")
+
+                client = SSEClient(response)
+                for event in client.events():
+                    if event.event == "message":
+                        try:
+                            data = json.loads(event.data)
+                            
+                            choice = data.get('choices', [{}])[0]
+                            audio_base64 = choice.get('audio', '')
+                            text = choice.get('text', '')
+                            
+                            if audio_base64:
+                                pcm_data = base64_to_pcm(audio_base64)
+                                if (hasattr(pcm_data[0], 'shape') and 
+                                    pcm_data[0].size > 0):
+                                    print(f"📦 收到音频片段: {len(audio_base64)} 字符")
+                                    on_audio_done(pcm_data[0])
+
+                            if text and text != '\n<end>':
+                                print(f"💬 收到文本: {text}")
+                                on_text_done(text)
+                                
+                        except json.JSONDecodeError as e:
+                            print(f"JSON解析错误: {e}")        
+            except Exception as e:
+                print(f"Completions监听错误: {e}")
         
+        self.completions_thread = threading.Thread(target=listen)
+        self.completions_thread.daemon = True
+        self.completions_thread.start()
+
+
     def start_completions_listener(self, on_audio_done, on_text_done):
         """启动completions接口监听"""
         def listen():
             try:
-                # response = requests.post(
-                #     f"{self.base_url}/completions",
-                #     json={},
-                #     headers={"uid": self.uid, "Accept": "text/event-stream"},
-                #     stream=True
-                # )
-                response = self.send_completions_request()
-                
+                response = requests.post(
+                    f"{self.base_url}/completions",
+                    json={},
+                    headers={"uid": self.uid, "Accept": "text/event-stream"},
+                    stream=True
+                )
+
                 print("✅ Completions连接建立")
+
+                # SSE消息缓冲
+                current_event = None
+                current_data = None
+
                 for line in response.iter_lines():
-                    if line:
-                        line_text = line.decode()
-                        if line_text.startswith("data: "):
+                    line_text = line.decode().strip()
+                    
+                    # 空行表示消息结束
+                    if not line_text:
+                        if current_event == "message" and current_data:
                             try:
-                                data = json.loads(line_text[6:])
-                                # self.responses.append(data)
+                                data = json.loads(current_data)
                                 
                                 choice = data.get('choices', [{}])[0]
                                 audio_base64 = choice.get('audio', '')
@@ -184,19 +228,30 @@ class MiniCPMClient:
                                 
                                 if audio_base64:
                                     pcm_data = base64_to_pcm(audio_base64)
-                                    print(f"pcm_data: {pcm_data}")
-                                    # 正确检查pcm_data是否有效
-                                    if (hasattr(pcm_data[0], 'shape') and  # 确保是NumPy数组
-                                        pcm_data[0].size > 0):  # 使用size检查数组是否为空
+                                    if (hasattr(pcm_data[0], 'shape') and 
+                                        pcm_data[0].size > 0):
                                         print(f"📦 收到音频片段: {len(audio_base64)} 字符")
                                         on_audio_done(pcm_data[0])
 
                                 if text and text != '\n<end>':
                                     print(f"💬 收到文本: {text}")
                                     on_text_done(text)
+                                    
+                            except json.JSONDecodeError as e:
+                                print(f"JSON解析错误: {e}, 数据: {current_data}")
                         
-                            except json.JSONDecodeError:
-                                print(f"原始数据: {line_text}")
+                        # 重置缓冲
+                        current_event = None
+                        current_data = None
+                        
+                    # 解析事件类型
+                    elif line_text.startswith("event: "):
+                        current_event = line_text[7:]  # 去掉 "event: "
+                        
+                    # 解析数据
+                    elif line_text.startswith("data: "):
+                        current_data = line_text[6:]  # 去掉 "data: "
+
             except Exception as e:
                 print(f"Completions监听错误: {e}")
         
