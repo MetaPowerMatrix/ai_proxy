@@ -65,35 +65,6 @@ def base64_to_pcm(base64_audio_data):
             
     except Exception as e:
         print(f"WAV解析失败: {e}")
-        
-        # 方法2: 使用librosa作为备选
-        try:
-            audio_buffer.seek(0)
-            audio_array, sr = librosa.load(audio_buffer, sr=None, mono=False)
-            
-            # librosa返回的是float32格式，范围[-1,1]
-            # 转换为int16 PCM格式
-            if audio_array.dtype == np.float32 or audio_array.dtype == np.float64:
-                pcm_array = (audio_array * 32767).astype(np.int16)
-            else:
-                pcm_array = audio_array
-                
-            channels = 1 if len(pcm_array.shape) == 1 else pcm_array.shape[0]
-            
-            return pcm_array, sr, channels
-            
-        except Exception as e2:
-            print(f"Librosa解析也失败: {e2}")
-            return None, None, None
-
-def merge_pcm_chunks(pcm_chunks_list):
-    """合并多个PCM音频片段"""
-    if not pcm_chunks_list:
-        return None
-    
-    # 假设所有片段具有相同的采样率和声道数
-    merged_pcm = np.concatenate(pcm_chunks_list, axis=0)
-    return merged_pcm
 
 def save_pcm_as_wav(pcm_data, sample_rate, channels, output_file):
     """将PCM数据保存为WAV文件"""
@@ -165,65 +136,24 @@ class MiniCPMClient:
 
         return response.json()
 
-    def start_completions_listener_with_sse(self, on_audio_done, on_text_done):
-        """启动SSE流completions接口监听"""
-        def listen():
-            try:
-                # response = requests.post(
-                #     f"{self.base_url}/completions",
-                #     json={},
-                #     headers={"uid": self.uid, "Accept": "text/event-stream"},
-                #     stream=True
-                # )
-                response = self.send_completions_request()
-                print("✅ SSE Completions连接建立")
-
-                # 添加调试信息
-                print(f"📊 响应状态码: {response.status_code}")
-                print(f"📊 响应头: {dict(response.headers)}")
-
-                client = SSEClient(response)
-                for event in client.events():
-                    if event.event == "message":
-                        try:
-                            data = json.loads(event.data)
-                            
-                            # 检查错误情况
-                            if 'error' in data:
-                                print(f"❌ 服务端错误: {data['error']}")
-                                continue
-                            
-                            choice = data.get('choices', [{}])[0]
-                            audio_base64 = choice.get('audio', '')
-                            text = choice.get('text', '')
-                            finish_reason = choice.get('finish_reason', '')
-
-                            # 检查多种结束条件
-                            if (text == '\n<end>' or 
-                                finish_reason in ['stop', 'completed'] or 
-                                text.endswith('<end>')):
-                                print("🏁 检测到结束标志，停止接收")
-
-                            if audio_base64:
-                                pcm_data = base64_to_pcm(audio_base64)
-                                if (hasattr(pcm_data[0], 'shape') and 
-                                    pcm_data[0].size > 0):
-                                    print(f"📦 收到音频片段: {len(audio_base64)} 字符")
-                                    on_audio_done(pcm_data[0])
-
-                            if text and text != '\n<end>':
-                                print(f"💬 收到文本: {text}")
-                                on_text_done(text)
-                                
-                        except json.JSONDecodeError as e:
-                            print(f"JSON解析错误: {e}")        
-            except Exception as e:
-                print(f"Completions监听错误: {e}")
+    def send_completions_request(self) -> requests.Response:
+        headers = {
+            "uid": self.uid,
+            "Accept": "text/event-stream",
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive"
+        }
         
-        self.completions_thread = threading.Thread(target=listen)
-        self.completions_thread.daemon = True
-        self.completions_thread.start()
-
+        response = self.session.post(
+            f"{self.base_url}/api/v1/completions",
+            headers=headers,
+            json={"prompt": ""},
+            stream=True,
+            timeout=(30, 60)
+        )
+        
+        return response
+    
     def stop_completions_listener(self):
         """停止completions监听器"""
         self.should_stop_listening = True
@@ -395,24 +325,6 @@ class MiniCPMClient:
         self.completions_thread = threading.Thread(target=listen)
         self.completions_thread.daemon = True
         self.completions_thread.start()
-
-    def send_completions_request(self) -> requests.Response:
-        headers = {
-            "uid": self.uid,
-            "Accept": "text/event-stream",
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive"
-        }
-        
-        response = self.session.post(
-            f"{self.base_url}/api/v1/completions",
-            headers=headers,
-            json={"prompt": ""},
-            stream=True,
-            timeout=(30, 60)
-        )
-        
-        return response
     
     def analyze_audio_quality(self, audio_file):
         """分析音频质量，返回关键指标"""
@@ -670,11 +582,63 @@ class MiniCPMClient:
         success_rate = (successful_chunks / len(chunks)) * 100 if chunks else 0
         print(f"成功率: {success_rate:.1f}% 总耗时: {total_time:.1f}s")
         
-        if success_rate >= 90:
-            print(f"   🎉 优秀! 分片发送非常稳定")
-        elif success_rate >= 70:
-            print(f"   ✅ 良好! 大部分片段发送成功")
-        else:
-            print(f"   ⚠️ 需要优化! 发送成功率较低")
-        
         return None, None
+
+    def start_completions_listener_with_sse(self, on_audio_done, on_text_done):
+        """启动SSE流completions接口监听"""
+        def listen():
+            try:
+                # response = requests.post(
+                #     f"{self.base_url}/completions",
+                #     json={},
+                #     headers={"uid": self.uid, "Accept": "text/event-stream"},
+                #     stream=True
+                # )
+                response = self.send_completions_request()
+                print("✅ SSE Completions连接建立")
+
+                # 添加调试信息
+                print(f"📊 响应状态码: {response.status_code}")
+                print(f"📊 响应头: {dict(response.headers)}")
+
+                client = SSEClient(response)
+                for event in client.events():
+                    if event.event == "message":
+                        try:
+                            data = json.loads(event.data)
+                            
+                            # 检查错误情况
+                            if 'error' in data:
+                                print(f"❌ 服务端错误: {data['error']}")
+                                continue
+                            
+                            choice = data.get('choices', [{}])[0]
+                            audio_base64 = choice.get('audio', '')
+                            text = choice.get('text', '')
+                            finish_reason = choice.get('finish_reason', '')
+
+                            # 检查多种结束条件
+                            if (text == '\n<end>' or 
+                                finish_reason in ['stop', 'completed'] or 
+                                text.endswith('<end>')):
+                                print("🏁 检测到结束标志，停止接收")
+
+                            if audio_base64:
+                                pcm_data = base64_to_pcm(audio_base64)
+                                if (hasattr(pcm_data[0], 'shape') and 
+                                    pcm_data[0].size > 0):
+                                    print(f"📦 收到音频片段: {len(audio_base64)} 字符")
+                                    on_audio_done(pcm_data[0])
+
+                            if text and text != '\n<end>':
+                                print(f"💬 收到文本: {text}")
+                                on_text_done(text)
+                                
+                        except json.JSONDecodeError as e:
+                            print(f"JSON解析错误: {e}")        
+            except Exception as e:
+                print(f"Completions监听错误: {e}")
+        
+        self.completions_thread = threading.Thread(target=listen)
+        self.completions_thread.daemon = True
+        self.completions_thread.start()
