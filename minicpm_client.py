@@ -112,6 +112,13 @@ class MiniCPMClient:
         self.uid = f"proxy_client_001"
         self.responses = []
         self.session_id = None
+        
+        # 线程控制变量
+        self.completions_thread = None
+        self.should_stop_listening = False
+        self.auto_restart_listener = True
+        self.current_audio_callback = None
+        self.current_text_callback = None
 
     def set_session_id(self, session_id):
         self.session_id = session_id
@@ -141,7 +148,7 @@ class MiniCPMClient:
                     }
                 }]
             }],
-            "end_of_stream": False  # 明确标记流结束
+            "end_of_stream": False
         }
         
         headers = {
@@ -217,9 +224,29 @@ class MiniCPMClient:
         self.completions_thread.daemon = True
         self.completions_thread.start()
 
+    def stop_completions_listener(self):
+        """停止completions监听器"""
+        self.should_stop_listening = True
+        if self.completions_thread and self.completions_thread.is_alive():
+            print("🛑 停止completions监听器...")
+            self.completions_thread.join(timeout=2)
 
-    def start_completions_listener(self, on_audio_done, on_text_done):
+    def restart_completions_listener(self):
+        """重启completions监听器"""
+        if self.current_audio_callback and self.current_text_callback:
+            print("🔄 重启completions监听器...")
+            self.stop_completions_listener()
+            time.sleep(0.5)  # 短暂延迟确保线程完全退出
+            self.start_completions_listener(self.current_audio_callback, self.current_text_callback)
+
+    def start_completions_listener(self, on_audio_done, on_text_done, auto_restart=True):
         """启动completions接口监听"""
+        # 保存回调函数供重启使用
+        self.current_audio_callback = on_audio_done
+        self.current_text_callback = on_text_done
+        self.auto_restart_listener = auto_restart
+        self.should_stop_listening = False
+        
         def listen():
             try:
                 response = requests.post(
@@ -234,8 +261,14 @@ class MiniCPMClient:
                 # SSE消息缓冲
                 current_event = None
                 current_data = None
+                received_end_signal = False
 
                 for line in response.iter_lines():
+                    # 检查是否需要停止
+                    if self.should_stop_listening:
+                        print("🛑 收到停止信号，退出监听")
+                        break
+                        
                     line_text = line.decode().strip()
                     
                     # 空行表示消息结束
@@ -247,7 +280,16 @@ class MiniCPMClient:
                                 choice = data.get('choices', [{}])[0]
                                 audio_base64 = choice.get('audio', '')
                                 text = choice.get('text', '')
+                                finish_reason = choice.get('finish_reason', '')
                                 
+                                # 检测结束条件
+                                if (text == '\n<end>' or 
+                                    finish_reason in ['stop', 'completed'] or 
+                                    text.endswith('<end>') or
+                                    finish_reason == 'done'):
+                                    print("🏁 检测到结束标志")
+                                    received_end_signal = True
+
                                 if audio_base64:
                                     pcm_data = base64_to_pcm(audio_base64)
                                     if (hasattr(pcm_data[0], 'shape') and 
@@ -258,6 +300,11 @@ class MiniCPMClient:
                                 if text and text != '\n<end>':
                                     print(f"💬 收到文本: {text}")
                                     on_text_done(text)
+                                
+                                # 如果收到结束信号，退出循环
+                                if received_end_signal:
+                                    print("🔚 完成当前会话，退出监听线程")
+                                    break
                                     
                             except json.JSONDecodeError as e:
                                 print(f"JSON解析错误: {e}, 数据: {current_data}")
@@ -274,8 +321,24 @@ class MiniCPMClient:
                     elif line_text.startswith("data: "):
                         current_data = line_text[6:]  # 去掉 "data: "
 
+                # 监听结束后的处理
+                print("📻 监听线程结束")
+                
+                # 如果启用自动重启且不是手动停止
+                if self.auto_restart_listener and not self.should_stop_listening:
+                    print("🔄 5秒后自动重启监听器...")
+                    time.sleep(1)
+                    if not self.should_stop_listening:  # 再次检查是否需要停止
+                        self.restart_completions_listener()
+
             except Exception as e:
                 print(f"Completions监听错误: {e}")
+                # 发生错误时也尝试重启
+                if self.auto_restart_listener and not self.should_stop_listening:
+                    print("🔄 因错误重启监听器...")
+                    time.sleep(3)
+                    if not self.should_stop_listening:
+                        self.restart_completions_listener()
         
         self.completions_thread = threading.Thread(target=listen)
         self.completions_thread.daemon = True
@@ -521,6 +584,8 @@ class MiniCPMClient:
         start_time = time.time()
         successful_chunks = 0
         failed_chunks = 0
+        
+        
         for i, chunk in enumerate(chunks):
             try:
                 # 判断是否为最后一个片段
@@ -533,9 +598,6 @@ class MiniCPMClient:
                 )
                 choices = stream_result.get('choices', {})
                 
-                # if 'audio' in choices:
-                #     print(f"   🎵 收到音频数据: {len(choices['audio'])} 字符")
-                
                 if choices.get('content'):
                     text_content = choices['content']
                     if text_content == 'success':
@@ -543,10 +605,6 @@ class MiniCPMClient:
                     else:
                         failed_chunks += 1
                 
-                # 检查完成状态
-                # if choices.get('finish_reason') == 'done':
-                #     print(f"   🏁 片段 {chunk['index']} 标记为完成")
-                        
             except Exception as e:
                 print(f"   💥 片段 {chunk['index']} 处理异常: {e}")
                 failed_chunks += 1
@@ -557,9 +615,6 @@ class MiniCPMClient:
         end_time = time.time()
         total_time = end_time - start_time
         
-        # response2 = self.send_completions_request()
-        # print(f"completions响应头: {dict(response2.headers)}")
-
         success_rate = (successful_chunks / len(chunks)) * 100 if chunks else 0
         print(f"成功率: {success_rate:.1f}% 总耗时: {total_time:.1f}s")
         
