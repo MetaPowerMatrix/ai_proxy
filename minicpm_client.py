@@ -158,6 +158,25 @@ class MiniCPMClient:
 
         return response.json()
 
+    def debug_completions_response(self):
+        """调试completions响应内容"""
+        try:
+            response = self.send_completions_request()
+            print(f"📊 响应状态码: {response.status_code}")
+            print(f"📊 响应头: {dict(response.headers)}")
+            
+            # 读取前几行内容
+            lines_read = 0
+            for line in response.iter_lines():
+                if lines_read >= 10:  # 只读取前10行
+                    break
+                line_text = line.decode() if line else "(empty line)"
+                print(f"📊 响应行 {lines_read}: {repr(line_text)}")
+                lines_read += 1
+                
+        except Exception as e:
+            print(f"❌ 调试响应失败: {e}")
+
     def start_completions_listener_with_sse(self, on_audio_done, on_text_done):
         """启动SSE流completions接口监听"""
         def listen():
@@ -170,6 +189,10 @@ class MiniCPMClient:
                 )
                 # response = self.send_completions_request()
                 print("✅ SSE Completions连接建立")
+
+                # 添加调试信息
+                print(f"🔍 响应状态: {response.status_code}")
+                print(f"🔍 Content-Type: {response.headers.get('content-type', 'N/A')}")
 
                 client = SSEClient(response)
                 for event in client.events():
