@@ -227,17 +227,45 @@ class MiniCPMClient:
     def stop_completions_listener(self):
         """停止completions监听器"""
         self.should_stop_listening = True
-        if self.completions_thread and self.completions_thread.is_alive():
+        if (self.completions_thread and 
+            self.completions_thread.is_alive() and 
+            self.completions_thread != threading.current_thread()):
             print("🛑 停止completions监听器...")
             self.completions_thread.join(timeout=2)
+        else:
+            print("🛑 设置停止标志...")
 
     def restart_completions_listener(self):
         """重启completions监听器"""
         if self.current_audio_callback and self.current_text_callback:
             print("🔄 重启completions监听器...")
-            self.stop_completions_listener()
-            time.sleep(0.5)  # 短暂延迟确保线程完全退出
-            self.start_completions_listener(self.current_audio_callback, self.current_text_callback)
+            # 如果是在监听线程内部调用，只设置停止标志
+            if threading.current_thread() == self.completions_thread:
+                self.should_stop_listening = True
+                # 延迟重启，让当前线程先退出
+                def delayed_restart():
+                    time.sleep(0.5)
+                    if not self.should_stop_listening:  # 检查是否仍需要重启
+                        return
+                    self.should_stop_listening = False
+                    self.start_completions_listener(
+                        self.current_audio_callback, 
+                        self.current_text_callback, 
+                        self.auto_restart_listener
+                    )
+                
+                restart_thread = threading.Thread(target=delayed_restart)
+                restart_thread.daemon = True
+                restart_thread.start()
+            else:
+                # 外部调用，正常停止后重启
+                self.stop_completions_listener()
+                time.sleep(0.5)
+                self.start_completions_listener(
+                    self.current_audio_callback, 
+                    self.current_text_callback, 
+                    self.auto_restart_listener
+                )
 
     def start_completions_listener(self, on_audio_done, on_text_done, auto_restart=True):
         """启动completions接口监听"""
@@ -326,19 +354,43 @@ class MiniCPMClient:
                 
                 # 如果启用自动重启且不是手动停止
                 if self.auto_restart_listener and not self.should_stop_listening:
-                    print("🔄 5秒后自动重启监听器...")
-                    time.sleep(1)
-                    if not self.should_stop_listening:  # 再次检查是否需要停止
-                        self.restart_completions_listener()
+                    print("🔄 1秒后自动重启监听器...")
+                    
+                    # 创建延迟重启线程，避免线程自join问题
+                    def delayed_restart():
+                        time.sleep(1)
+                        if self.auto_restart_listener and not self.should_stop_listening:
+                            print("🚀 重新启动监听器...")
+                            self.start_completions_listener(
+                                self.current_audio_callback, 
+                                self.current_text_callback, 
+                                self.auto_restart_listener
+                            )
+                    
+                    restart_thread = threading.Thread(target=delayed_restart)
+                    restart_thread.daemon = True
+                    restart_thread.start()
 
             except Exception as e:
                 print(f"Completions监听错误: {e}")
                 # 发生错误时也尝试重启
                 if self.auto_restart_listener and not self.should_stop_listening:
                     print("🔄 因错误重启监听器...")
-                    time.sleep(3)
-                    if not self.should_stop_listening:
-                        self.restart_completions_listener()
+                    
+                    # 创建延迟重启线程，避免线程自join问题
+                    def delayed_restart_on_error():
+                        time.sleep(3)
+                        if self.auto_restart_listener and not self.should_stop_listening:
+                            print("🚀 错误恢复：重新启动监听器...")
+                            self.start_completions_listener(
+                                self.current_audio_callback, 
+                                self.current_text_callback, 
+                                self.auto_restart_listener
+                            )
+                    
+                    restart_thread = threading.Thread(target=delayed_restart_on_error)
+                    restart_thread.daemon = True
+                    restart_thread.start()
         
         self.completions_thread = threading.Thread(target=listen)
         self.completions_thread.daemon = True
