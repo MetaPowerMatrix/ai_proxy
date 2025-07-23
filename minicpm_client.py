@@ -162,7 +162,13 @@ class MiniCPMClient:
         """启动SSE流completions接口监听"""
         def listen():
             try:
-                response = self.send_completions_request()
+                response = requests.post(
+                    f"{self.base_url}/completions",
+                    json={},
+                    headers={"uid": self.uid, "Accept": "text/event-stream"},
+                    stream=True
+                )
+                # response = self.send_completions_request()
                 print("✅ SSE Completions连接建立")
 
                 client = SSEClient(response)
