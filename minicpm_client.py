@@ -141,7 +141,7 @@ class MiniCPMClient:
                     }
                 }]
             }],
-            "end_of_stream": end_of_stream  # 明确标记流结束
+            "end_of_stream": False  # 明确标记流结束
         }
         
         headers = {
