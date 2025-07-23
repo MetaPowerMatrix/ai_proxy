@@ -161,7 +161,12 @@ class MiniCPMClient:
     def debug_completions_response(self):
         """调试completions响应内容"""
         try:
-            response = self.send_completions_request()
+            response = requests.post(
+                f"{self.base_url}/completions",
+                json={},
+                headers={"uid": self.uid, "Accept": "text/event-stream"},
+                stream=True
+            )
             print(f"📊 响应状态码: {response.status_code}")
             print(f"📊 响应头: {dict(response.headers)}")
             
