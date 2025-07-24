@@ -11,6 +11,7 @@ import time
 import threading
 import os
 import tempfile
+import queue  # 添加队列支持
 
 
 def base64_to_pcm(base64_audio_data):
@@ -90,6 +91,11 @@ class MiniCPMClient:
         self.auto_restart_listener = True
         self.current_audio_callback = None
         self.current_text_callback = None
+        
+        # 性能优化：消息队列和处理线程
+        self.message_queue = queue.Queue(maxsize=1000)  # 消息缓冲队列
+        self.processor_thread = None
+        self.should_stop_processing = False
 
     def set_session_id(self, session_id):
         self.session_id = session_id
@@ -157,6 +163,10 @@ class MiniCPMClient:
     def stop_completions_listener(self):
         """停止completions监听器"""
         self.should_stop_listening = True
+        
+        # 停止消息处理线程
+        self._stop_message_processor()
+        
         if (self.completions_thread and 
             self.completions_thread.is_alive() and 
             self.completions_thread != threading.current_thread()):
@@ -164,6 +174,13 @@ class MiniCPMClient:
             self.completions_thread.join(timeout=2)
         else:
             print("🛑 设置停止标志...")
+            
+        # 清空消息队列
+        try:
+            while not self.message_queue.empty():
+                self.message_queue.get_nowait()
+        except queue.Empty:
+            pass
 
     def restart_completions_listener(self):
         """重启completions监听器"""
@@ -198,12 +215,15 @@ class MiniCPMClient:
                 )
 
     def start_completions_listener(self, on_audio_done, on_text_done, auto_restart=True):
-        """启动completions接口监听"""
+        """启动completions接口监听（优化版：分离接收和处理）"""
         # 保存回调函数供重启使用
         self.current_audio_callback = on_audio_done
         self.current_text_callback = on_text_done
         self.auto_restart_listener = auto_restart
         self.should_stop_listening = False
+        
+        # 启动消息处理线程
+        self._start_message_processor(on_audio_done, on_text_done)
         
         def listen():
             exit_reason = "unknown"  # 记录退出原因
@@ -214,7 +234,8 @@ class MiniCPMClient:
                     f"{self.base_url}/completions",
                     json={},
                     headers={"uid": self.uid, "Accept": "text/event-stream"},
-                    stream=True
+                    stream=True,
+                    timeout=(10, 300)  # 连接超时10秒，读取超时5分钟
                 )
 
                 print("✅ Completions连接建立")
@@ -223,6 +244,7 @@ class MiniCPMClient:
                 current_event = None
                 current_data = None
                 received_end_signal = False
+                messages_received = 0
 
                 try:
                     for line in response.iter_lines():
@@ -237,47 +259,28 @@ class MiniCPMClient:
                         # 空行表示消息结束
                         if not line_text:
                             if current_event == "message" and current_data:
+                                messages_received += 1
+                                
+                                # 🚀 关键优化：快速将数据放入队列，不在接收线程处理
                                 try:
-                                    data = json.loads(current_data)
+                                    # 非阻塞放入队列，如果队列满了则跳过
+                                    self.message_queue.put(current_data, timeout=0.01)
                                     
-                                    completed = data.get('completed', False)
-                                    choice = data.get('choices', [{}])[0]
-                                    audio_base64 = choice.get('audio', '')
-                                    text = choice.get('text', '')
-                                    finish_reason = choice.get('finish_reason', '')
-                                    
-                                    if completed:
-                                        print(f"🏁 全部发送完毕，统计数据{data}")
+                                    # 快速检查是否是结束信号（不进行复杂处理）
+                                    if '"completed":true' in current_data or '"finish_reason":"stop"' in current_data:
                                         received_end_signal = True
                                         exit_reason = "end_signal"
-
-                                    # 检测结束条件
-                                    if (text == '\n<end>' or 
-                                        finish_reason in ['stop', 'completed'] or 
-                                        text.endswith('<end>') or
-                                        finish_reason == 'done'):
-                                        print("🏁 检测到结束标志")
-                                        received_end_signal = True
-                                        exit_reason = "end_signal"
-
-                                    if audio_base64:
-                                        pcm_data = base64_to_pcm(audio_base64)
-                                        if (hasattr(pcm_data[0], 'shape') and 
-                                            pcm_data[0].size > 0):
-                                            print(f"📦 收到音频片段: {len(audio_base64)} 字符")
-                                            on_audio_done(pcm_data[0])
-
-                                    if text and text != '\n<end>':
-                                        print(f"💬 收到文本: {text}")
-                                        on_text_done(text)
-                                    
-                                    # 如果收到结束信号，退出循环
-                                    if received_end_signal:
-                                        print("🔚 完成当前会话，退出监听线程")
-                                        break
                                         
-                                except json.JSONDecodeError as e:
-                                    print(f"JSON解析错误: {e}, 数据: {current_data}")
+                                except queue.Full:
+                                    print("⚠️ 消息队列已满，跳过消息")
+                                    continue
+                                except Exception as e:
+                                    print(f"队列操作错误: {e}")
+                                
+                                # 如果收到结束信号，退出循环
+                                if received_end_signal:
+                                    print(f"🔚 完成当前会话，退出监听线程 (共收到 {messages_received} 条消息)")
+                                    break
                             
                             # 重置缓冲
                             current_event = None
@@ -285,15 +288,25 @@ class MiniCPMClient:
                             
                         # 解析事件类型
                         elif line_text.startswith("event: "):
-                            print(f"🔄 收到事件: {line_text}")
                             current_event = line_text[7:]  # 去掉 "event: "
                             
                         # 解析数据
                         elif line_text.startswith("data: "):
                             current_data = line_text[6:]  # 去掉 "data: "
 
-                        else:
-                            print(f"🔄 收到空行，继续接收: {line_text}")
+                        # 检查处理线程是否发送了结束信号
+                        try:
+                            end_signal = self.message_queue.get_nowait()
+                            if end_signal == "__END_SIGNAL__":
+                                received_end_signal = True
+                                exit_reason = "end_signal"
+                                print("🔚 从处理线程收到结束信号")
+                                break
+                            else:
+                                # 如果不是结束信号，放回队列
+                                self.message_queue.put_nowait(end_signal)
+                        except queue.Empty:
+                            pass
                     
                     # 如果循环正常结束且没有设置退出原因，说明是流结束
                     if exit_reason == "unknown":
@@ -330,6 +343,99 @@ class MiniCPMClient:
         self.completions_thread = threading.Thread(target=listen)
         self.completions_thread.daemon = True
         self.completions_thread.start()
+
+    def _start_message_processor(self, on_audio_done, on_text_done):
+        """启动消息处理线程，专门处理从队列中取出的消息"""
+        def process_messages():
+            print("🔧 消息处理线程启动")
+            
+            while not self.should_stop_processing:
+                try:
+                    # 从队列中获取消息，设置超时避免无限阻塞
+                    message_data = self.message_queue.get(timeout=1.0)
+                    
+                    if message_data is None:  # 退出信号
+                        break
+                    
+                    # 处理消息
+                    try:
+                        data = json.loads(message_data)
+                        
+                        completed = data.get('completed', False)
+                        choice = data.get('choices', [{}])[0]
+                        audio_base64 = choice.get('audio', '')
+                        text = choice.get('text', '')
+                        finish_reason = choice.get('finish_reason', '')
+                        
+                        if completed:
+                            print(f"🏁 全部发送完毕，统计数据{data}")
+                        
+                        # 检测结束条件
+                        is_end_signal = (
+                            completed or
+                            text == '\n<end>' or 
+                            finish_reason in ['stop', 'completed'] or 
+                            text.endswith('<end>') or
+                            finish_reason == 'done'
+                        )
+                        
+                        if is_end_signal:
+                            print("🏁 检测到结束标志")
+                            # 将结束信号放回队列，让接收线程知道
+                            try:
+                                self.message_queue.put("__END_SIGNAL__", timeout=0.1)
+                            except queue.Full:
+                                pass
+
+                        # 处理音频数据（这里可能比较慢）
+                        if audio_base64:
+                            start_time = time.time()
+                            pcm_data = base64_to_pcm(audio_base64)
+                            process_time = time.time() - start_time
+                            
+                            if (hasattr(pcm_data[0], 'shape') and 
+                                pcm_data[0].size > 0):
+                                print(f"📦 收到音频片段: {len(audio_base64)} 字符 (处理耗时: {process_time:.3f}s)")
+                                on_audio_done(pcm_data[0])
+
+                        # 处理文本数据
+                        if text and text != '\n<end>':
+                            print(f"💬 收到文本: {text}")
+                            on_text_done(text)
+                            
+                    except json.JSONDecodeError as e:
+                        print(f"JSON解析错误: {e}, 数据: {message_data}")
+                    except Exception as e:
+                        print(f"消息处理错误: {e}")
+                    
+                    # 标记任务完成
+                    self.message_queue.task_done()
+                    
+                except queue.Empty:
+                    # 超时，继续循环
+                    continue
+                except Exception as e:
+                    print(f"消息处理器错误: {e}")
+                    
+            print("🔧 消息处理线程结束")
+        
+        self.should_stop_processing = False
+        self.processor_thread = threading.Thread(target=process_messages)
+        self.processor_thread.daemon = True
+        self.processor_thread.start()
+
+    def _stop_message_processor(self):
+        """停止消息处理线程"""
+        self.should_stop_processing = True
+        
+        # 发送退出信号
+        try:
+            self.message_queue.put(None, timeout=0.1)
+        except queue.Full:
+            pass
+        
+        if self.processor_thread and self.processor_thread.is_alive():
+            self.processor_thread.join(timeout=3)
 
     def _handle_listener_exit(self, exit_reason, connection_error=None):
         """处理监听器退出，根据不同原因采取不同策略"""
@@ -709,3 +815,84 @@ class MiniCPMClient:
         self.completions_thread = threading.Thread(target=listen)
         self.completions_thread.daemon = True
         self.completions_thread.start()
+
+    def get_queue_status(self):
+        """获取消息队列状态"""
+        return {
+            "queue_size": self.message_queue.qsize(),
+            "queue_maxsize": self.message_queue.maxsize,
+            "queue_full": self.message_queue.full(),
+            "queue_empty": self.message_queue.empty(),
+            "processor_running": self.processor_thread and self.processor_thread.is_alive(),
+            "listener_running": self.completions_thread and self.completions_thread.is_alive()
+        }
+    
+    def print_performance_stats(self):
+        """打印性能统计信息"""
+        status = self.get_queue_status()
+        print("📊 性能统计:")
+        print(f"   队列使用: {status['queue_size']}/{status['queue_maxsize']}")
+        print(f"   队列状态: {'满' if status['queue_full'] else '正常'}")
+        print(f"   处理线程: {'运行中' if status['processor_running'] else '已停止'}")
+        print(f"   监听线程: {'运行中' if status['listener_running'] else '已停止'}")
+
+
+    def test_high_performance_listener(self):
+        """测试高性能监听器"""
+        print("🚀 测试高性能监听器...")
+        
+        audio_count = 0
+        text_count = 0
+        
+        def on_audio_done(pcm_data):
+            nonlocal audio_count
+            audio_count += 1
+            print(f"🎵 音频 #{audio_count}: {pcm_data.shape if hasattr(pcm_data, 'shape') else len(pcm_data)} samples")
+        
+        def on_text_done(text):
+            nonlocal text_count
+            text_count += 1
+            print(f"💬 文本 #{text_count}: {text}")
+        
+        # 启动优化版监听器
+        self.start_completions_listener(on_audio_done, on_text_done, auto_restart=True)
+        
+        # 定期打印性能统计
+        def print_stats():
+            while self.completions_thread and self.completions_thread.is_alive():
+                time.sleep(5)
+                self.print_performance_stats()
+                print(f"📈 已处理: 音频 {audio_count} 条，文本 {text_count} 条")
+        
+        stats_thread = threading.Thread(target=print_stats)
+        stats_thread.daemon = True
+        stats_thread.start()
+        
+        print("✅ 高性能监听器已启动（分离接收和处理线程）")
+        return True
+
+
+# 性能优化使用示例
+def performance_example():
+    """展示如何使用优化后的高性能监听器"""
+    client = MiniCPMClient()
+    
+    print("🚀 启动高性能监听器示例...")
+    
+    # 启动高性能测试
+    client.test_high_performance_listener()
+    
+    # 模拟一些操作
+    try:
+        time.sleep(2)
+        print("\n📊 初始性能统计:")
+        client.print_performance_stats()
+        
+        # 继续运行
+        while True:
+            time.sleep(10)
+            client.print_performance_stats()
+            
+    except KeyboardInterrupt:
+        print("\n🛑 停止测试")
+        client.stop_completions_listener()
