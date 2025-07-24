@@ -237,67 +237,81 @@ class MiniCPMClient:
                 current_event = None
                 current_data = None
 
-                try:
-                    for line in response.iter_lines():
-                        # 检查是否需要停止
-                        if self.should_stop_listening:
-                            exit_reason = "manual_stop"
-                            print("🛑 收到停止信号，退出监听")
+                for line in response.iter_lines():
+                    # 检查是否需要停止
+                    if self.should_stop_listening:
+                        exit_reason = "manual_stop"
+                        print("🛑 收到停止信号，退出监听")
+                        break
+
+                    # 如果服务器发送非 UTF-8 数据
+                    try:
+                        line_text = line.decode().strip()
+                    except UnicodeDecodeError as e:
+                        print(f"解码错误: {e}")
+                        continue
+
+                    # 跳过空行
+                    if not line_text:
+                        continue
+                        
+                    # 解析事件类型
+                    if line_text.startswith("event: "):
+                        current_event = line_text[7:]  # 去掉 "event: "
+                        print(f"📋 事件类型: {current_event}")
+                    elif line_text.startswith("data: "):
+                        current_data = line_text[6:]  # 去掉 "data: "
+                        
+                        # 检查结束条件
+                        if ('<end>' in current_data):
+                            print("🏁 检测到结束标志，停止接收")
+                            exit_reason = "end_signal"
                             break
                         
-                        line_text = line.decode().strip()
-                        print(f"🔄 收到数据: {line_text}")
+                        # 放入队列处理
+                        try:
+                            self.message_queue.put(current_data, timeout=0.01)
+                        except queue.Full:
+                            print("⚠️ 消息队列已满，跳过消息")
+                            continue
+                        except Exception as e:
+                            print(f"队列操作错误: {e}")
                         
-                        if line_text:
-                            # 解析事件类型
-                            if line_text.startswith("event: "):
-                                current_event = line_text[7:]  # 去掉 "event: "
-                                continue
-
-                            # 解析数据
-                            if line_text.startswith("data: "):
-                                current_data = line_text[6:]  # 去掉 "data: "
-
-                            if current_event == "message" and current_data:
-                                try:
-                                    # 检查结束条件
-                                    if (current_data.contains('<end>')):
-                                        print("🏁 检测到结束标志，停止接收")
-                                        exit_reason = "end_signal"
-                                        break
-                                    # 放入队列，如果队列满了则跳过
-                                    self.message_queue.put(current_data, timeout=0.01)
-                                except queue.Full:
-                                    print("⚠️ 消息队列已满，跳过消息")
-                                    continue
-                                except Exception as e:
-                                    print(f"队列操作错误: {e}")
-                                
-                        current_data = None
-                                                
-                    # 如果循环正常结束且没有设置退出原因，说明是流结束
-                    if exit_reason == "unknown":
-                        exit_reason = "stream_ended"
+                    # 解析其他SSE字段
+                    elif line_text.startswith("id: "):
+                        message_id = line_text[4:]
+                        print(f"🆔 消息ID: {message_id}")
                         
-                except requests.exceptions.Timeout as e:
-                    exit_reason = "timeout"
-                    connection_error = f"连接超时: {e}"
-                    print(f"⏰ 连接超时: {e}")
+                    elif line_text.startswith("retry: "):
+                        retry_time = line_text[7:]
+                        print(f"⏰ 重试间隔: {retry_time}ms")
+                        
+                    else:
+                        print(f"❓ 未知格式: {line_text}")
+
+                # 如果循环正常结束且没有设置退出原因，说明是流结束
+                if exit_reason == "unknown":
+                    exit_reason = "stream_ended"
                     
-                except requests.exceptions.ConnectionError as e:
-                    exit_reason = "connection_error"
-                    connection_error = f"连接错误: {e}"
-                    print(f"🔌 连接错误: {e}")
-                    
-                except requests.exceptions.ChunkedEncodingError as e:
-                    exit_reason = "server_disconnect"
-                    connection_error = f"服务器断开连接: {e}"
-                    print(f"🔌 服务器断开连接: {e}")
-                    
-                except requests.exceptions.RequestException as e:
-                    exit_reason = "request_error"
-                    connection_error = f"请求错误: {e}"
-                    print(f"🌐 网络请求错误: {e}")
+            except requests.exceptions.Timeout as e:
+                exit_reason = "timeout"
+                connection_error = f"连接超时: {e}"
+                print(f"⏰ 连接超时: {e}")
+                
+            except requests.exceptions.ConnectionError as e:
+                exit_reason = "connection_error"
+                connection_error = f"连接错误: {e}"
+                print(f"🔌 连接错误: {e}")
+                
+            except requests.exceptions.ChunkedEncodingError as e:
+                exit_reason = "server_disconnect"
+                connection_error = f"服务器断开连接: {e}"
+                print(f"🔌 服务器断开连接: {e}")
+                
+            except requests.exceptions.RequestException as e:
+                exit_reason = "request_error"
+                connection_error = f"请求错误: {e}"
+                print(f"🌐 网络请求错误: {e}")
 
             except Exception as e:
                 exit_reason = "exception"
