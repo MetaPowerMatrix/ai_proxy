@@ -153,9 +153,9 @@ class MiniCPMClient:
         response = self.session.post(
             f"{self.base_url}/api/v1/completions",
             headers=headers,
-            json={"prompt": ""},
+            json={},
             stream=True,
-            timeout=(30, 60)
+            timeout=(10, 300)
         )
         
         return response
@@ -230,21 +230,12 @@ class MiniCPMClient:
             connection_error = None  # 记录连接错误
             
             try:
-                response = requests.post(
-                    f"{self.base_url}/completions",
-                    json={},
-                    headers={"uid": self.uid, "Accept": "text/event-stream"},
-                    stream=True,
-                    timeout=(10, 300)  # 连接超时10秒，读取超时5分钟
-                )
-
+                response = self.send_completions_request()
                 print("✅ Completions连接建立")
 
                 # SSE消息缓冲
                 current_event = None
                 current_data = None
-                received_end_signal = False
-                messages_received = 0
 
                 try:
                     for line in response.iter_lines():
@@ -258,56 +249,34 @@ class MiniCPMClient:
                         
                         # 空行表示消息结束
                         if not line_text:
+                            # 解析事件类型
+                            if line_text.startswith("event: "):
+                                current_event = line_text[7:]  # 去掉 "event: "
+                                continue
+
+                            # 解析数据
+                            if line_text.startswith("data: "):
+                                current_data = line_text[6:]  # 去掉 "data: "
+
                             if current_event == "message" and current_data:
-                                messages_received += 1
-                                
-                                # 🚀 关键优化：快速将数据放入队列，不在接收线程处理
                                 try:
                                     # 非阻塞放入队列，如果队列满了则跳过
                                     self.message_queue.put(current_data, timeout=0.01)
                                     
-                                    # 快速检查是否是结束信号（不进行复杂处理）
-                                    if '"completed":true' in current_data or '"finish_reason":"stop"' in current_data:
-                                        received_end_signal = True
+                                    # 检查结束条件
+                                    if (line_text.contains('<end>')):
+                                        print("🏁 检测到结束标志，停止接收")
                                         exit_reason = "end_signal"
-                                        
+                                        break
+
                                 except queue.Full:
                                     print("⚠️ 消息队列已满，跳过消息")
                                     continue
                                 except Exception as e:
                                     print(f"队列操作错误: {e}")
                                 
-                                # 如果收到结束信号，退出循环
-                                if received_end_signal:
-                                    print(f"🔚 完成当前会话，退出监听线程 (共收到 {messages_received} 条消息)")
-                                    break
-                            
-                            # 重置缓冲
-                            current_event = None
-                            current_data = None
-                            
-                        # 解析事件类型
-                        elif line_text.startswith("event: "):
-                            current_event = line_text[7:]  # 去掉 "event: "
-                            
-                        # 解析数据
-                        elif line_text.startswith("data: "):
-                            current_data = line_text[6:]  # 去掉 "data: "
-
-                        # 检查处理线程是否发送了结束信号
-                        try:
-                            end_signal = self.message_queue.get_nowait()
-                            if end_signal == "__END_SIGNAL__":
-                                received_end_signal = True
-                                exit_reason = "end_signal"
-                                print("🔚 从处理线程收到结束信号")
-                                break
-                            else:
-                                # 如果不是结束信号，放回队列
-                                self.message_queue.put_nowait(end_signal)
-                        except queue.Empty:
-                            pass
-                    
+                        current_data = None
+                                                
                     # 如果循环正常结束且没有设置退出原因，说明是流结束
                     if exit_reason == "unknown":
                         exit_reason = "stream_ended"
