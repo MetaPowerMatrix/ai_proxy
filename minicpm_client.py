@@ -240,11 +240,17 @@ class MiniCPMClient:
                                 try:
                                     data = json.loads(current_data)
                                     
+                                    completed = data.get('completed', False)
                                     choice = data.get('choices', [{}])[0]
                                     audio_base64 = choice.get('audio', '')
                                     text = choice.get('text', '')
                                     finish_reason = choice.get('finish_reason', '')
                                     
+                                    if completed:
+                                        print(f"🏁 全部发送完毕，统计数据{data}")
+                                        received_end_signal = True
+                                        exit_reason = "end_signal"
+
                                     # 检测结束条件
                                     if (text == '\n<end>' or 
                                         finish_reason in ['stop', 'completed'] or 
