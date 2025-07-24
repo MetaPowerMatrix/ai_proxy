@@ -206,6 +206,9 @@ class MiniCPMClient:
         self.should_stop_listening = False
         
         def listen():
+            exit_reason = "unknown"  # 记录退出原因
+            connection_error = None  # 记录连接错误
+            
             try:
                 response = requests.post(
                     f"{self.base_url}/completions",
@@ -221,111 +224,169 @@ class MiniCPMClient:
                 current_data = None
                 received_end_signal = False
 
-                for line in response.iter_lines():
-                    # 检查是否需要停止
-                    if self.should_stop_listening:
-                        print("🛑 收到停止信号，退出监听")
-                        break
+                try:
+                    for line in response.iter_lines():
+                        # 检查是否需要停止
+                        if self.should_stop_listening:
+                            exit_reason = "manual_stop"
+                            print("🛑 收到停止信号，退出监听")
+                            break
                         
-                    line_text = line.decode().strip()
-                    
-                    # 空行表示消息结束
-                    if not line_text:
-                        if current_event == "message" and current_data:
-                            try:
-                                data = json.loads(current_data)
-                                
-                                choice = data.get('choices', [{}])[0]
-                                audio_base64 = choice.get('audio', '')
-                                text = choice.get('text', '')
-                                finish_reason = choice.get('finish_reason', '')
-                                
-                                # 检测结束条件
-                                if (text == '\n<end>' or 
-                                    finish_reason in ['stop', 'completed'] or 
-                                    text.endswith('<end>') or
-                                    finish_reason == 'done'):
-                                    print("🏁 检测到结束标志")
-                                    received_end_signal = True
-
-                                if audio_base64:
-                                    pcm_data = base64_to_pcm(audio_base64)
-                                    if (hasattr(pcm_data[0], 'shape') and 
-                                        pcm_data[0].size > 0):
-                                        print(f"📦 收到音频片段: {len(audio_base64)} 字符")
-                                        on_audio_done(pcm_data[0])
-
-                                if text and text != '\n<end>':
-                                    print(f"💬 收到文本: {text}")
-                                    on_text_done(text)
-                                
-                                # 如果收到结束信号，退出循环
-                                if received_end_signal:
-                                    print("🔚 完成当前会话，退出监听线程")
-                                    break
+                        line_text = line.decode().strip()
+                        
+                        # 空行表示消息结束
+                        if not line_text:
+                            if current_event == "message" and current_data:
+                                try:
+                                    data = json.loads(current_data)
                                     
-                            except json.JSONDecodeError as e:
-                                print(f"JSON解析错误: {e}, 数据: {current_data}")
-                        
-                        # 重置缓冲
-                        current_event = None
-                        current_data = None
-                        
-                    # 解析事件类型
-                    elif line_text.startswith("event: "):
-                        current_event = line_text[7:]  # 去掉 "event: "
-                        
-                    # 解析数据
-                    elif line_text.startswith("data: "):
-                        current_data = line_text[6:]  # 去掉 "data: "
+                                    choice = data.get('choices', [{}])[0]
+                                    audio_base64 = choice.get('audio', '')
+                                    text = choice.get('text', '')
+                                    finish_reason = choice.get('finish_reason', '')
+                                    
+                                    # 检测结束条件
+                                    if (text == '\n<end>' or 
+                                        finish_reason in ['stop', 'completed'] or 
+                                        text.endswith('<end>') or
+                                        finish_reason == 'done'):
+                                        print("🏁 检测到结束标志")
+                                        received_end_signal = True
+                                        exit_reason = "end_signal"
 
-                # 监听结束后的处理
-                print("📻 监听线程结束")
-                
-                # 如果启用自动重启且不是手动停止
-                if self.auto_restart_listener and not self.should_stop_listening:
-                    print("🔄 1秒后自动重启监听器...")
+                                    if audio_base64:
+                                        pcm_data = base64_to_pcm(audio_base64)
+                                        if (hasattr(pcm_data[0], 'shape') and 
+                                            pcm_data[0].size > 0):
+                                            print(f"📦 收到音频片段: {len(audio_base64)} 字符")
+                                            on_audio_done(pcm_data[0])
+
+                                    if text and text != '\n<end>':
+                                        print(f"💬 收到文本: {text}")
+                                        on_text_done(text)
+                                    
+                                    # 如果收到结束信号，退出循环
+                                    if received_end_signal:
+                                        print("🔚 完成当前会话，退出监听线程")
+                                        break
+                                        
+                                except json.JSONDecodeError as e:
+                                    print(f"JSON解析错误: {e}, 数据: {current_data}")
+                            
+                            # 重置缓冲
+                            current_event = None
+                            current_data = None
+                            
+                        # 解析事件类型
+                        elif line_text.startswith("event: "):
+                            print(f"🔄 收到事件: {line_text}")
+                            current_event = line_text[7:]  # 去掉 "event: "
+                            
+                        # 解析数据
+                        elif line_text.startswith("data: "):
+                            current_data = line_text[6:]  # 去掉 "data: "
+
+                        else:
+                            print(f"🔄 收到空行，继续接收: {line_text}")
                     
-                    # 创建延迟重启线程，避免线程自join问题
-                    def delayed_restart():
-                        time.sleep(1)
-                        if self.auto_restart_listener and not self.should_stop_listening:
-                            print("🚀 重新启动监听器...")
-                            self.start_completions_listener(
-                                self.current_audio_callback, 
-                                self.current_text_callback, 
-                                self.auto_restart_listener
-                            )
+                    # 如果循环正常结束且没有设置退出原因，说明是流结束
+                    if exit_reason == "unknown":
+                        exit_reason = "stream_ended"
+                        
+                except requests.exceptions.Timeout as e:
+                    exit_reason = "timeout"
+                    connection_error = f"连接超时: {e}"
+                    print(f"⏰ 连接超时: {e}")
                     
-                    restart_thread = threading.Thread(target=delayed_restart)
-                    restart_thread.daemon = True
-                    restart_thread.start()
+                except requests.exceptions.ConnectionError as e:
+                    exit_reason = "connection_error"
+                    connection_error = f"连接错误: {e}"
+                    print(f"🔌 连接错误: {e}")
+                    
+                except requests.exceptions.ChunkedEncodingError as e:
+                    exit_reason = "server_disconnect"
+                    connection_error = f"服务器断开连接: {e}"
+                    print(f"🔌 服务器断开连接: {e}")
+                    
+                except requests.exceptions.RequestException as e:
+                    exit_reason = "request_error"
+                    connection_error = f"请求错误: {e}"
+                    print(f"🌐 网络请求错误: {e}")
 
             except Exception as e:
-                print(f"Completions监听错误: {e}")
-                # 发生错误时也尝试重启
-                if self.auto_restart_listener and not self.should_stop_listening:
-                    print("🔄 因错误重启监听器...")
-                    
-                    # 创建延迟重启线程，避免线程自join问题
-                    def delayed_restart_on_error():
-                        time.sleep(3)
-                        if self.auto_restart_listener and not self.should_stop_listening:
-                            print("🚀 错误恢复：重新启动监听器...")
-                            self.start_completions_listener(
-                                self.current_audio_callback, 
-                                self.current_text_callback, 
-                                self.auto_restart_listener
-                            )
-                    
-                    restart_thread = threading.Thread(target=delayed_restart_on_error)
-                    restart_thread.daemon = True
-                    restart_thread.start()
+                exit_reason = "exception"
+                connection_error = f"监听异常: {e}"
+                print(f"💥 Completions监听错误: {e}")
+            
+            # 分析退出原因并决定重启策略
+            self._handle_listener_exit(exit_reason, connection_error)
         
         self.completions_thread = threading.Thread(target=listen)
         self.completions_thread.daemon = True
         self.completions_thread.start()
-    
+
+    def _handle_listener_exit(self, exit_reason, connection_error=None):
+        """处理监听器退出，根据不同原因采取不同策略"""
+        print("📻 监听线程结束")
+        
+        # 根据退出原因提供详细信息
+        exit_messages = {
+            "manual_stop": "🛑 手动停止",
+            "end_signal": "🏁 正常完成（收到结束信号）",
+            "stream_ended": "📡 服务器流结束",
+            "timeout": "⏰ 连接超时",
+            "connection_error": "🔌 网络连接问题",
+            "server_disconnect": "🔌 服务器主动断开连接",
+            "request_error": "🌐 网络请求错误", 
+            "exception": "💥 程序异常",
+            "unknown": "❓ 未知原因"
+        }
+        
+        print(f"🔍 退出原因: {exit_messages.get(exit_reason, exit_reason)}")
+        if connection_error:
+            print(f"🔍 详细信息: {connection_error}")
+        
+        # 决定是否重启
+        should_restart = self.auto_restart_listener and not self.should_stop_listening
+        
+        # 根据不同退出原因设置不同的重启延迟
+        restart_delays = {
+            "manual_stop": 0,      # 手动停止，不重启
+            "end_signal": 1,       # 正常结束，快速重启
+            "stream_ended": 1,     # 流结束，快速重启
+            "timeout": 5,          # 超时，延迟重启
+            "connection_error": 10, # 连接错误，较长延迟
+            "server_disconnect": 3, # 服务器断开，中等延迟
+            "request_error": 8,    # 请求错误，较长延迟
+            "exception": 5,        # 异常，中等延迟
+            "unknown": 5           # 未知，中等延迟
+        }
+        
+        # 手动停止不重启
+        if exit_reason == "manual_stop":
+            should_restart = False
+        
+        if should_restart:
+            delay = restart_delays.get(exit_reason, 5)
+            print(f"🔄 {delay}秒后自动重启监听器...")
+            
+            # 创建延迟重启线程，避免线程自join问题
+            def delayed_restart():
+                time.sleep(delay)
+                if self.auto_restart_listener and not self.should_stop_listening:
+                    print(f"🚀 重新启动监听器（原因：{exit_messages.get(exit_reason, exit_reason)}）...")
+                    self.start_completions_listener(
+                        self.current_audio_callback, 
+                        self.current_text_callback, 
+                        self.auto_restart_listener
+                    )
+            
+            restart_thread = threading.Thread(target=delayed_restart)
+            restart_thread.daemon = True
+            restart_thread.start()
+        else:
+            print("🚫 不会自动重启监听器")
+
     def analyze_audio_quality(self, audio_file):
         """分析音频质量，返回关键指标"""
         try:
