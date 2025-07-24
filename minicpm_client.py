@@ -246,6 +246,7 @@ class MiniCPMClient:
                             break
                         
                         line_text = line.decode().strip()
+                        print(f"🔄 收到数据: {line_text}")
                         
                         # 空行表示消息结束
                         if not line_text:
@@ -260,15 +261,13 @@ class MiniCPMClient:
 
                             if current_event == "message" and current_data:
                                 try:
-                                    # 非阻塞放入队列，如果队列满了则跳过
-                                    self.message_queue.put(current_data, timeout=0.01)
-                                    
                                     # 检查结束条件
-                                    if (line_text.contains('<end>')):
+                                    if (current_data.contains('<end>')):
                                         print("🏁 检测到结束标志，停止接收")
                                         exit_reason = "end_signal"
                                         break
-
+                                    # 放入队列，如果队列满了则跳过
+                                    self.message_queue.put(current_data, timeout=0.01)
                                 except queue.Full:
                                     print("⚠️ 消息队列已满，跳过消息")
                                     continue
@@ -340,21 +339,14 @@ class MiniCPMClient:
                             print(f"🏁 全部发送完毕，统计数据{data}")
                         
                         # 检测结束条件
-                        is_end_signal = (
+                        if (
                             completed or
                             text == '\n<end>' or 
                             finish_reason in ['stop', 'completed'] or 
                             text.endswith('<end>') or
                             finish_reason == 'done'
-                        )
-                        
-                        if is_end_signal:
+                        ):
                             print("🏁 检测到结束标志")
-                            # 将结束信号放回队列，让接收线程知道
-                            try:
-                                self.message_queue.put("__END_SIGNAL__", timeout=0.1)
-                            except queue.Full:
-                                pass
 
                         # 处理音频数据（这里可能比较慢）
                         if audio_base64:
