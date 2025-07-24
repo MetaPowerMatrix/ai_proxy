@@ -248,8 +248,7 @@ class MiniCPMClient:
                         line_text = line.decode().strip()
                         print(f"🔄 收到数据: {line_text}")
                         
-                        # 空行表示消息结束
-                        if not line_text:
+                        if line_text:
                             # 解析事件类型
                             if line_text.startswith("event: "):
                                 current_event = line_text[7:]  # 去掉 "event: "
