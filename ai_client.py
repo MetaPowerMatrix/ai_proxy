@@ -123,7 +123,7 @@ def check_service_status(reference_audio_file):
             response = minicpm_client.check_service_status()
             if response.status_code == 200:
                 logger.info(f"MiniCPM服务状态: {response.json()}")
-                minicpm_client.init_with_adaptive_vad(reference_audio_file)
+                minicpm_client.init_with_custom_vad_threshold(reference_audio_file, 0.7)
                 minicpm_client.start_completions_listener(on_audio_done=on_audio_done, on_text_done=on_text_done)
             else:
                 logger.error(f"MiniCPM服务状态检查失败: {response.status_code}")

@@ -600,7 +600,7 @@ class MiniCPMClient:
                             "options": {
                                 "voice_clone_prompt": "你是一个AI助手。你能接受视频，音频和文本输入并输出语音和文本。模仿输入音频中的声音特征。",
                                 "assistant_prompt": "作为助手，你将使用这种声音风格说话。",
-                                "use_audio_prompt": 0,
+                                "use_audio_prompt": 1,
                                 "use_optimized_vad": False,
                                 "vad_threshold": 0.7,
                                 # "vad_threshold": vad_threshold,  # 使用自定义阈值
