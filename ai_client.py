@@ -77,18 +77,17 @@ def setup_directories():
 
 def on_audio_done(audio_chunks):
     global ws, session_id_bytes
-    audio_bytes = audio_chunks
 
     # 将NumPy数组转换为字节数据
-    # if hasattr(audio_chunks, 'tobytes'):
-    #     audio_bytes = audio_chunks.tobytes()
-    #     logger.info(f"✅ 成功转换为字节数据: {len(audio_bytes)} 字节")
-    # elif hasattr(audio_chunks, 'tostring'):
-    #     audio_bytes = audio_chunks.tostring()
-    #     logger.info(f"✅ 成功转换为字节数据: {len(audio_bytes)} 字节")
-    # else:
-    #     logger.error("无法将音频数据转换为字节格式")
-    #     return
+    if hasattr(audio_chunks, 'tobytes'):
+        audio_bytes = audio_chunks.tobytes()
+        logger.info(f"✅ 成功转换为字节数据: {len(audio_bytes)} 字节")
+    elif hasattr(audio_chunks, 'tostring'):
+        audio_bytes = audio_chunks.tostring()
+        logger.info(f"✅ 成功转换为字节数据: {len(audio_bytes)} 字节")
+    else:
+        logger.error("无法将音频数据转换为字节格式")
+        return
     
     # 发送音频回复 - 分块发送
     chunk_size = WS_CHUNK_SIZE
