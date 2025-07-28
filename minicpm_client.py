@@ -14,10 +14,10 @@ import tempfile
 import queue  # 添加队列支持
 
 
-def base64_to_pcm(base64_audio_data):
-    """将base64音频数据解码为PCM数据"""
+def base64_to_pcm(base64_audio_data, volume_gain=2.0):
+    """将base64音频WAV数据解码为PCM数据"""
+    volume_gain = max(0.1, min(volume_gain, 5.0))
     
-    # 解码base64
     try:
         audio_bytes = base64.b64decode(base64_audio_data)
     except Exception as e:
@@ -42,16 +42,37 @@ def base64_to_pcm(base64_audio_data):
             pcm_data = wav_file.readframes(frames)
             
             # 转换为numpy数组
-            if sample_width == 1:
-                dtype = np.uint8
-            elif sample_width == 2:
-                dtype = np.int16
-            elif sample_width == 4:
-                dtype = np.int32
-            else:
-                dtype = np.float32
+            # if sample_width == 1:
+            #     dtype = np.uint8
+            # elif sample_width == 2:
+            #     dtype = np.int16
+            # elif sample_width == 4:
+            #     dtype = np.int32
+            # else:
+            #     dtype = np.float32
                 
-            pcm_array = np.frombuffer(pcm_data, dtype=dtype)
+            pcm_array = np.frombuffer(pcm_data, dtype=np.int16)
+
+            # 音量放大处理（使用传入的volume_gain参数）
+            
+            # 根据数据类型进行音量放大，避免溢出
+            # if dtype == np.int16:
+                # 对于int16，先转换为float32进行计算，避免溢出
+            pcm_float = pcm_array.astype(np.float32)
+            pcm_float *= volume_gain
+            # 限制在int16范围内并转换回去
+            pcm_array = np.clip(pcm_float, -32768, 32767).astype(np.int16)
+            # elif dtype == np.int32:
+            #     pcm_float = pcm_array.astype(np.float64)
+            #     pcm_float *= volume_gain
+            #     pcm_array = np.clip(pcm_float, -2147483648, 2147483647).astype(np.int32)
+            # elif dtype == np.uint8:
+            #     pcm_float = pcm_array.astype(np.float32)
+            #     pcm_float = (pcm_float - 128) * volume_gain + 128  # uint8中心点是128
+            #     pcm_array = np.clip(pcm_float, 0, 255).astype(np.uint8)
+            # else:  # float32
+            #     pcm_array *= volume_gain
+            #     pcm_array = np.clip(pcm_array, -1.0, 1.0)  # float32范围是[-1.0, 1.0]
 
             # 如果sample_rate不是16000，则重采样到16000
             # if sample_rate != 16000:
@@ -59,8 +80,8 @@ def base64_to_pcm(base64_audio_data):
             #     sample_rate = 16000
             
             # 如果是多声道，重塑数组
-            if channels > 1:
-                pcm_array = pcm_array.reshape(-1, channels)
+            # if channels > 1:
+            #     pcm_array = pcm_array.reshape(-1, channels)
             
             return pcm_array, sample_rate, channels
             
@@ -78,12 +99,15 @@ def save_pcm_as_wav(pcm_data, sample_rate, channels, output_file):
 
 
 class MiniCPMClient:
-    def __init__(self, base_url="http://localhost:32550"):
+    def __init__(self, base_url="http://localhost:32550", volume_gain=2.0):
         self.base_url = base_url
         self.session = requests.Session()
         self.uid = f"proxy_client_001"
         self.responses = []
         self.session_id = None
+        
+        # 音量控制
+        self.volume_gain = volume_gain  # 音量增益因子，1.0为原音量，2.0为增大一倍
         
         # 线程控制变量
         self.completions_thread = None
@@ -367,8 +391,7 @@ class MiniCPMClient:
                             pcm_data = base64_to_pcm(audio_base64)
                             process_time = time.time() - start_time
                             
-                            if (hasattr(pcm_data[0], 'shape') and 
-                                pcm_data[0].size > 0):
+                            if (pcm_data[0].size > 0):
                                 print(f"📦 收到音频片段: {len(audio_base64)} 字符 (处理耗时: {process_time:.3f}s)")
                                 on_audio_done(pcm_data[0])
 
@@ -789,84 +812,3 @@ class MiniCPMClient:
         self.completions_thread = threading.Thread(target=listen)
         self.completions_thread.daemon = True
         self.completions_thread.start()
-
-    def get_queue_status(self):
-        """获取消息队列状态"""
-        return {
-            "queue_size": self.message_queue.qsize(),
-            "queue_maxsize": self.message_queue.maxsize,
-            "queue_full": self.message_queue.full(),
-            "queue_empty": self.message_queue.empty(),
-            "processor_running": self.processor_thread and self.processor_thread.is_alive(),
-            "listener_running": self.completions_thread and self.completions_thread.is_alive()
-        }
-    
-    def print_performance_stats(self):
-        """打印性能统计信息"""
-        status = self.get_queue_status()
-        print("📊 性能统计:")
-        print(f"   队列使用: {status['queue_size']}/{status['queue_maxsize']}")
-        print(f"   队列状态: {'满' if status['queue_full'] else '正常'}")
-        print(f"   处理线程: {'运行中' if status['processor_running'] else '已停止'}")
-        print(f"   监听线程: {'运行中' if status['listener_running'] else '已停止'}")
-
-
-    def test_high_performance_listener(self):
-        """测试高性能监听器"""
-        print("🚀 测试高性能监听器...")
-        
-        audio_count = 0
-        text_count = 0
-        
-        def on_audio_done(pcm_data):
-            nonlocal audio_count
-            audio_count += 1
-            print(f"🎵 音频 #{audio_count}: {pcm_data.shape if hasattr(pcm_data, 'shape') else len(pcm_data)} samples")
-        
-        def on_text_done(text):
-            nonlocal text_count
-            text_count += 1
-            print(f"💬 文本 #{text_count}: {text}")
-        
-        # 启动优化版监听器
-        self.start_completions_listener(on_audio_done, on_text_done, auto_restart=True)
-        
-        # 定期打印性能统计
-        def print_stats():
-            while self.completions_thread and self.completions_thread.is_alive():
-                time.sleep(5)
-                self.print_performance_stats()
-                print(f"📈 已处理: 音频 {audio_count} 条，文本 {text_count} 条")
-        
-        stats_thread = threading.Thread(target=print_stats)
-        stats_thread.daemon = True
-        stats_thread.start()
-        
-        print("✅ 高性能监听器已启动（分离接收和处理线程）")
-        return True
-
-
-# 性能优化使用示例
-def performance_example():
-    """展示如何使用优化后的高性能监听器"""
-    client = MiniCPMClient()
-    
-    print("🚀 启动高性能监听器示例...")
-    
-    # 启动高性能测试
-    client.test_high_performance_listener()
-    
-    # 模拟一些操作
-    try:
-        time.sleep(2)
-        print("\n📊 初始性能统计:")
-        client.print_performance_stats()
-        
-        # 继续运行
-        while True:
-            time.sleep(10)
-            client.print_performance_stats()
-            
-    except KeyboardInterrupt:
-        print("\n🛑 停止测试")
-        client.stop_completions_listener()
