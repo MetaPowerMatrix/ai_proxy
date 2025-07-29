@@ -53,8 +53,6 @@ def base64_to_pcm(base64_audio_data, volume_gain=2.0):
                 
             pcm_array = np.frombuffer(pcm_data, np.int16)
 
-            # 音量放大处理（使用传入的volume_gain参数）
-            
             # 根据数据类型进行音量放大，避免溢出
             # if dtype == np.int16:
                 # 对于int16，先转换为float32进行计算，避免溢出

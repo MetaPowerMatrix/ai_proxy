@@ -33,6 +33,7 @@ logger = logging.getLogger("ai_client")
 AUDIO_DIR = os.getenv("AUDIO_DIR", "audio_files")
 PROCESSED_DIR = os.getenv("PROCESSED_DIR", "processed_files")
 WS_URL = os.getenv("WS_URL", "ws://stream.kalaisai.com:80/ws/proxy")
+MINICPM_URL = os.getenv("MINICPM_URL", "http://127.0.0.1:32550")
 
 # 本地服务接口URL
 API_URL = "http://127.0.0.1:8000/api/v1"
@@ -117,7 +118,7 @@ def check_service_status(reference_audio_file):
     try:
         # 检查MiniCPM服务状态
         if USE_MINICPM:
-            minicpm_client = MiniCPMClient()
+            minicpm_client = MiniCPMClient(base_url=MINICPM_URL)
             response = minicpm_client.check_service_status()
             if response.status_code == 200:
                 logger.info(f"MiniCPM服务状态: {response.json()}")
