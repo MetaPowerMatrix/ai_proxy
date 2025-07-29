@@ -368,20 +368,18 @@ class MiniCPMClient:
                         choice = data.get('choices', [{}])[0]
                         audio_base64 = choice.get('audio', '')
                         text = choice.get('text', '')
-                        finish_reason = choice.get('finish_reason', '')
                         
                         if completed:
                             print(f"🏁 全部发送完毕，统计数据{data}")
                         
                         # 检测结束条件
-                        if (
-                            completed or
-                            text == '\n<end>' or 
-                            finish_reason in ['stop', 'completed'] or 
-                            text.endswith('<end>') or
-                            finish_reason == 'done'
-                        ):
-                            print("🏁 检测到结束标志")
+                        # if (
+                        #     completed or
+                        #     text == '\n<end>' or 
+                        #     text.endswith('<end>') or
+                        #     finish_reason == 'done'
+                        # ):
+                        #     print("🏁 检测到结束标志")
 
                         # 处理音频数据（这里可能比较慢）
                         if audio_base64:
@@ -394,9 +392,9 @@ class MiniCPMClient:
                                 on_audio_done(pcm_data[0])
 
                         # 处理文本数据
-                        if text and text != '\n<end>':
-                            print(f"💬 收到文本: {text}")
-                            on_text_done(text)
+                        # if text and text != '\n<end>':
+                        #     print(f"💬 收到文本: {text}")
+                        #     on_text_done(text)
                             
                     except json.JSONDecodeError as e:
                         print(f"JSON解析错误: {e}, 数据: {message_data}")
