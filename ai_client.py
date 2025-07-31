@@ -16,6 +16,7 @@ import time
 from minicpm_client import MiniCPMClient
 import base64
 import io
+import numpy as np
 
 
 # 加载.env文件中的环境变量
@@ -76,8 +77,86 @@ def setup_directories():
     os.makedirs(PROCESSED_DIR, exist_ok=True)
     logger.info(f"已创建目录: {AUDIO_DIR}, {PROCESSED_DIR}")
 
-def on_audio_done(audio_chunks):
+def base64_to_pcm(base64_audio_data, volume_gain=2.0):
+    """将base64音频WAV数据解码为PCM数据"""
+    volume_gain = max(0.1, min(volume_gain, 5.0))
+    
+    try:
+        audio_bytes = base64.b64decode(base64_audio_data)
+    except Exception as e:
+        print(f"Base64解码失败: {e}")
+        return None, None, None
+    
+    # 使用BytesIO创建文件对象
+    audio_buffer = io.BytesIO(audio_bytes)
+    
+    try:
+        # 方法1: 使用wave库解析WAV文件
+        with wave.open(audio_buffer, 'rb') as wav_file:
+            # 获取音频参数
+            frames = wav_file.getnframes()
+            sample_rate = wav_file.getframerate()
+            channels = wav_file.getnchannels()
+            sample_width = wav_file.getsampwidth()
+            
+            print(f"音频参数: {frames}帧, {sample_rate}Hz, {channels}声道, {sample_width}字节/样本")
+            
+            # 读取PCM数据
+            pcm_data = wav_file.readframes(frames)
+            
+            # 转换为numpy数组
+            if sample_width == 1:
+                dtype = np.uint8
+            elif sample_width == 2:
+                dtype = np.int16
+            elif sample_width == 4:
+                dtype = np.int32
+            else:
+                dtype = np.float32
+                
+            pcm_array = np.frombuffer(pcm_data, dtype)
+
+            # 根据数据类型进行音量放大，避免溢出
+            if dtype == np.int16:
+                # 对于int16，先转换为float32进行计算，避免溢出
+                pcm_float = pcm_array.astype(np.float32)
+                pcm_float *= volume_gain
+                pcm_array = np.clip(pcm_float, -32768, 32767).astype(np.int16)
+            elif dtype == np.int32:
+                pcm_float = pcm_array.astype(np.float64)
+                pcm_float *= volume_gain
+                pcm_array = np.clip(pcm_float, -2147483648, 2147483647).astype(np.int32)
+            elif dtype == np.uint8:
+                pcm_float = pcm_array.astype(np.float32)
+                pcm_float = (pcm_float - 128) * volume_gain + 128  # uint8中心点是128
+                pcm_array = np.clip(pcm_float, 0, 255).astype(np.uint8)
+            else:  # float32
+                pcm_array *= volume_gain
+                pcm_array = np.clip(pcm_array, -1.0, 1.0)  # float32范围是[-1.0, 1.0]
+
+            # 如果sample_rate不是16000，则重采样到16000
+            # if sample_rate != 16000:
+            #     pcm_array = librosa.resample(pcm_array, orig_sr=sample_rate, target_sr=16000)
+            #     sample_rate = 16000
+            
+            # 如果是多声道，重塑数组
+            if channels > 1:
+                pcm_array = pcm_array.reshape(-1, channels)
+            
+            return pcm_array, sample_rate, channels
+            
+    except Exception as e:
+        print(f"WAV解析失败: {e}")
+
+def on_audio_done(audio_base64):
     global ws, session_id_bytes
+
+    pcm_data = base64_to_pcm(audio_base64)
+    if pcm_data[0].size > 0:
+        audio_chunks = pcm_data[0]
+    else:
+        logger.error("无法将音频数据转换为字节格式")
+        return
 
     # 将NumPy数组转换为字节数据
     if hasattr(audio_chunks, 'tobytes'):

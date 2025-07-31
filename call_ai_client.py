@@ -15,6 +15,7 @@ import websocket
 import time
 from minicpm_client import MiniCPMClient
 import librosa
+import base64
 
 
 # 加载.env文件中的环境变量
@@ -75,9 +76,29 @@ def setup_directories():
     os.makedirs(PROCESSED_DIR, exist_ok=True)
     logger.info(f"已创建目录: {AUDIO_DIR}, {PROCESSED_DIR}")
 
-def on_audio_done(audio_bytes):
+def base64_to_wav(base64_audio_data, volume_gain=2.0):
+    """解码base64音频WAV数据"""
+    volume_gain = max(0.1, min(volume_gain, 5.0))
+    
+    try:
+        audio_bytes = base64.b64decode(base64_audio_data)
+    except Exception as e:
+        print(f"Base64解码失败: {e}")
+        return None, None, None
+    
+    return audio_bytes, 24000, 1
+            
+
+def on_audio_done(audio_base64):
     global ws, session_id_bytes
 
+    audio_chunks = base64_to_wav(audio_base64)
+
+    if len(audio_chunks[0]) > 0:
+        audio_bytes = audio_chunks[0]
+    else:
+        logger.error("无法将音频数据转换为字节格式")
+        return
     # 如果sample_rate不是8000，则重采样到8000
     # if sample_rate != 8000:
     #     audio_chunks = librosa.resample(audio_chunks, orig_sr=sample_rate, target_sr=8000)
