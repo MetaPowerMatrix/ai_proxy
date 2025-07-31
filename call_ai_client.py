@@ -358,7 +358,7 @@ def process_audio(raw_audio_data, session_id):
         with wave.open(wav_file_path, 'wb') as wav_file:
             wav_file.setnchannels(1)
             wav_file.setsampwidth(2)
-            wav_file.setframerate(8000)
+            wav_file.setframerate(16000)
             wav_file.writeframes(raw_audio_data)
         logger.info(f"已保存WAV文件: {wav_file_path}")
         
