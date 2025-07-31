@@ -75,24 +75,13 @@ def setup_directories():
     os.makedirs(PROCESSED_DIR, exist_ok=True)
     logger.info(f"已创建目录: {AUDIO_DIR}, {PROCESSED_DIR}")
 
-def on_audio_done(audio_chunks, sample_rate=24000):
+def on_audio_done(audio_bytes):
     global ws, session_id_bytes
 
     # 如果sample_rate不是8000，则重采样到8000
-    if sample_rate != 8000:
-        audio_chunks = librosa.resample(audio_chunks, orig_sr=sample_rate, target_sr=8000)
+    # if sample_rate != 8000:
+    #     audio_chunks = librosa.resample(audio_chunks, orig_sr=sample_rate, target_sr=8000)
 
-    # 将NumPy数组转换为字节数据
-    if hasattr(audio_chunks, 'tobytes'):
-        audio_bytes = audio_chunks.tobytes()
-        logger.info(f"✅ 成功转换为字节数据: {len(audio_bytes)} 字节")
-    elif hasattr(audio_chunks, 'tostring'):
-        audio_bytes = audio_chunks.tostring()
-        logger.info(f"✅ 成功转换为字节数据: {len(audio_bytes)} 字节")
-    else:
-        logger.error("无法将音频数据转换为字节格式")
-        return
-    
     # 发送音频回复 - 分块发送
     chunk_size = WS_CHUNK_SIZE
     total_chunks = (len(audio_bytes) + chunk_size - 1) // chunk_size

@@ -85,6 +85,19 @@ def base64_to_pcm(base64_audio_data, volume_gain=2.0):
     except Exception as e:
         print(f"WAV解析失败: {e}")
 
+def base64_to_wav(base64_audio_data, volume_gain=2.0):
+    """解码base64音频WAV数据"""
+    volume_gain = max(0.1, min(volume_gain, 5.0))
+    
+    try:
+        audio_bytes = base64.b64decode(base64_audio_data)
+    except Exception as e:
+        print(f"Base64解码失败: {e}")
+        return None, None, None
+    
+    return audio_bytes, 24000, 1
+            
+
 def save_pcm_as_wav(pcm_data, sample_rate, channels, output_file):
     """将PCM数据保存为WAV文件"""
     try:
@@ -383,10 +396,10 @@ class MiniCPMClient:
                         # 处理音频数据（这里可能比较慢）
                         if audio_base64:
                             start_time = time.time()
-                            pcm_data = base64_to_pcm(audio_base64)
+                            pcm_data = base64_to_wav(audio_base64)
                             process_time = time.time() - start_time
                             
-                            if (pcm_data[0].size > 0):
+                            if (len(pcm_data[0]) > 0):
                                 print(f"📦 收到音频片段: {len(audio_base64)} 字符 (处理耗时: {process_time:.3f}s)")
                                 on_audio_done(pcm_data[0])
 
