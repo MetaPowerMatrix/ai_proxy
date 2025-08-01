@@ -106,7 +106,8 @@ def on_audio_done(audio_base64):
     if not send_audio_chunk(ws, session_id_bytes, audio_bytes):
         logger.error(f"发送音频数据块失败")
 
-
+    logger.info(f"📤 发送音频块,大小: {len(audio_bytes)} 字节")
+    
     # 发送音频回复 - 分块发送
     # chunk_size = WS_CHUNK_SIZE
     # total_chunks = (len(audio_bytes) + chunk_size - 1) // chunk_size
@@ -124,7 +125,6 @@ def on_audio_done(audio_base64):
 
 
 def on_text_done(text):
-    """处理接收到的文本数据"""
     logger.info(f"💬 收到文本: {text}")
     # 这里可以添加文本处理逻辑，比如发送到WebSocket等
 
