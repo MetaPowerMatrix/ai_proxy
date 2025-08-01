@@ -103,20 +103,24 @@ def on_audio_done(audio_base64):
     # if sample_rate != 8000:
     #     audio_chunks = librosa.resample(audio_chunks, orig_sr=sample_rate, target_sr=8000)
 
+    if not send_audio_chunk(ws, session_id_bytes, audio_bytes):
+        logger.error(f"发送音频数据块失败")
+
+
     # 发送音频回复 - 分块发送
-    chunk_size = WS_CHUNK_SIZE
-    total_chunks = (len(audio_bytes) + chunk_size - 1) // chunk_size
+    # chunk_size = WS_CHUNK_SIZE
+    # total_chunks = (len(audio_bytes) + chunk_size - 1) // chunk_size
     
-    for i in range(0, len(audio_bytes), chunk_size):
-        # 截取一块音频数据
-        audio_chunk = audio_bytes[i:i+chunk_size]
-        # 发送数据块
-        if not send_audio_chunk(ws, session_id_bytes, audio_chunk):
-            logger.error(f"发送音频数据块失败: {i//chunk_size + 1}/{total_chunks}")
-            break
-        logger.info(f"📤 发送音频块: {i//chunk_size + 1}/{total_chunks}, 大小: {len(audio_chunk)} 字节")
-        # 短暂暂停，避免发送过快
-        time.sleep(0.05)
+    # for i in range(0, len(audio_bytes), chunk_size):
+    #     # 截取一块音频数据
+    #     audio_chunk = audio_bytes[i:i+chunk_size]
+    #     # 发送数据块
+    #     if not send_audio_chunk(ws, session_id_bytes, audio_chunk):
+    #         logger.error(f"发送音频数据块失败: {i//chunk_size + 1}/{total_chunks}")
+    #         break
+    #     logger.info(f"📤 发送音频块: {i//chunk_size + 1}/{total_chunks}, 大小: {len(audio_chunk)} 字节")
+    #     # 短暂暂停，避免发送过快
+    #     time.sleep(0.05)
 
 
 def on_text_done(text):
