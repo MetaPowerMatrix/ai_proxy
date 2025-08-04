@@ -30,7 +30,7 @@ logging.basicConfig(
 logger = logging.getLogger("ai_client")
 
 # 全局变量
-AUDIO_DIR = os.getenv("AUDIO_DIR", "audio_files")
+AUDIO_DIR = os.getenv("AUDIO_DIR", "freeswitch_audio_files")
 PROCESSED_DIR = os.getenv("PROCESSED_DIR", "processed_files")
 WS_URL = os.getenv("WS_URL", "ws://stream.kalaisai.com:80/ws/call")
 MINICPM_URL = os.getenv("MINICPM_URL", "http://127.0.0.1:32551")
