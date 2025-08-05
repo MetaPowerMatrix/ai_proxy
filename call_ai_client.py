@@ -107,21 +107,6 @@ def on_audio_done(audio_base64):
         logger.error(f"发送音频数据块失败")
 
     logger.info(f"📤 发送音频块,大小: {len(audio_bytes)} 字节")
-    
-    # 发送音频回复 - 分块发送
-    # chunk_size = WS_CHUNK_SIZE
-    # total_chunks = (len(audio_bytes) + chunk_size - 1) // chunk_size
-    
-    # for i in range(0, len(audio_bytes), chunk_size):
-    #     # 截取一块音频数据
-    #     audio_chunk = audio_bytes[i:i+chunk_size]
-    #     # 发送数据块
-    #     if not send_audio_chunk(ws, session_id_bytes, audio_chunk):
-    #         logger.error(f"发送音频数据块失败: {i//chunk_size + 1}/{total_chunks}")
-    #         break
-    #     logger.info(f"📤 发送音频块: {i//chunk_size + 1}/{total_chunks}, 大小: {len(audio_chunk)} 字节")
-    #     # 短暂暂停，避免发送过快
-    #     time.sleep(0.05)
 
 
 def on_text_done(text):
@@ -142,8 +127,8 @@ def check_service_status(reference_audio_file):
                 minicpm_client.init_with_custom_vad_threshold(
                     reference_audio_file, 
                     0.7,
-                    "你是一个通过电话呼叫潜在客户介绍在线货运搬家业务的电话销售人员，你懂得沟通，能全面介绍公司业务，你能接受音频和文本输入并输出语音和文本。模仿输入音频中的声音特征。",
-                    "作为一个善于沟通和积极介绍业务的电话销售人员，你将使用这种声音风格说话。"
+                    "你是一个通过外呼电话和潜在客户沟通的市场推广业务员，你能全面介绍公司的货运搬家业务，你能接受音频和文本输入并输出语音和文本。模仿输入音频中的声音特征。",
+                    "作为一个善于沟通市场推广业务员，你将使用这种声音风格说话。"
                 )
                 minicpm_client.start_completions_listener(on_audio_done=on_audio_done, on_text_done=on_text_done)
             else:
