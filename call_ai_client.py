@@ -139,7 +139,12 @@ def check_service_status(reference_audio_file):
             response = minicpm_client.check_service_status()
             if response.status_code == 200:
                 logger.info(f"MiniCPM服务状态: {response.json()}")
-                minicpm_client.init_with_custom_vad_threshold(reference_audio_file, 0.7)
+                minicpm_client.init_with_custom_vad_threshold(
+                    reference_audio_file, 
+                    0.7,
+                    "你是一个通过电话呼叫潜在客户介绍在线货运搬家业务的电话销售人员，你懂得沟通，能全面介绍公司业务，你能接受音频和文本输入并输出语音和文本。模仿输入音频中的声音特征。",
+                    "作为一个善于沟通和积极介绍业务的电话销售人员，你将使用这种声音风格说话。"
+                )
                 minicpm_client.start_completions_listener(on_audio_done=on_audio_done, on_text_done=on_text_done)
             else:
                 logger.error(f"MiniCPM服务状态检查失败: {response.status_code}")

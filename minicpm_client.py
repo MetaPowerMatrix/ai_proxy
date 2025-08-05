@@ -521,7 +521,7 @@ class MiniCPMClient:
             return self.init_with_chinese_voice(audio_file)
 
 
-    def init_with_custom_vad_threshold(self, audio_file, vad_threshold):
+    def init_with_custom_vad_threshold(self, audio_file, vad_threshold, voice_clone_prompt, assistant_prompt):
         """使用自定义VAD阈值初始化客户端"""
         try:
             custom_audio_base64 = self.load_audio_file(audio_file)
@@ -540,8 +540,8 @@ class MiniCPMClient:
                         {
                             "type": "options",
                             "options": {
-                                "voice_clone_prompt": "你在扮演一个善于聊天，给别人提供情绪价值的角色。你能接受音频和文本输入并输出语音和文本。模仿输入音频中的声音特征。",
-                                "assistant_prompt": "作为一个好的聊天伙伴，你将使用这种声音风格说话。",
+                                "voice_clone_prompt": voice_clone_prompt,
+                                "assistant_prompt": assistant_prompt,
                                 "use_audio_prompt": 1,
                                 "use_optimized_vad": False,
                                 "vad_threshold": 0.7,
