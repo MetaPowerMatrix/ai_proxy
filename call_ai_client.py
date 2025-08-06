@@ -128,7 +128,8 @@ def check_service_status(reference_audio_file):
                     reference_audio_file, 
                     0.7,
                     "你是一个通过外呼电话和潜在客户沟通的市场推广业务员，你能全面介绍公司的货运搬家业务，你能接受音频和文本输入并输出语音和文本。模仿输入音频中的声音特征。",
-                    "作为一个善于沟通市场推广业务员，你将使用这种声音风格说话。"
+                    "作为一个善于沟通市场推广业务员，你将使用这种声音风格说话。",
+                    True
                 )
                 minicpm_client.start_completions_listener(on_audio_done=on_audio_done, on_text_done=on_text_done)
             else:

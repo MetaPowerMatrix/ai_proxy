@@ -521,7 +521,7 @@ class MiniCPMClient:
             return self.init_with_chinese_voice(audio_file)
 
 
-    def init_with_custom_vad_threshold(self, audio_file, vad_threshold, voice_clone_prompt, assistant_prompt):
+    def init_with_custom_vad_threshold(self, audio_file, vad_threshold, voice_clone_prompt, assistant_prompt, enable_silence_filtering=False):
         """使用自定义VAD阈值初始化客户端"""
         try:
             custom_audio_base64 = self.load_audio_file(audio_file)
@@ -546,7 +546,8 @@ class MiniCPMClient:
                                 "use_optimized_vad": False,
                                 "vad_threshold": 0.7,
                                 # "vad_threshold": vad_threshold,  # 使用自定义阈值
-                                "hd_video": False
+                                "hd_video": False,
+                                "enable_silence_filtering": enable_silence_filtering
                             }
                         }
                     ]
