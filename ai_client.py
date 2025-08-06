@@ -33,14 +33,13 @@ logger = logging.getLogger("ai_client")
 # 全局变量
 AUDIO_DIR = os.getenv("AUDIO_DIR", "audio_files")
 PROCESSED_DIR = os.getenv("PROCESSED_DIR", "processed_files")
-WS_URL = os.getenv("WS_URL", "ws://stream.kalaisai.com:80/ws/proxy")
-MINICPM_URL = os.getenv("MINICPM_URL", "http://127.0.0.1:32550")
 
-# 本地服务接口URL
+WS_URL = os.getenv("WS_URL", "ws://stream.kalaisai.com:80/ws/proxy")
 API_URL = "http://127.0.0.1:8000/api/v1"
 SPEECH_TO_TEXT_URL = f"{API_URL}/speech-to-text"
 MEGATTS_URL = f"http://127.0.0.1:5000/process"
 F5TTS_URL = f"http://127.0.0.1:7860/"
+MINICPM_URL = os.getenv("MINICPM_URL", "http://127.0.0.1:32550")
 
 QWEN_CHAT_URL = f"{API_URL}/chat/qwen"
 UNCENSORED_CHAT_URL = f"{API_URL}/chat/uncensored"
@@ -68,11 +67,9 @@ WS_HEARTBEAT_INTERVAL = 10  # 心跳间隔（秒）
 WS_RECONNECT_DELAY = 5  # 重连延迟（秒）
 WS_MAX_RETRIES = 3  # 最大重试次数
 WS_CHUNK_SIZE = 4096  # 数据分块大小
-WS_SEND_TIMEOUT = 30  # 发送超时时间（秒）
 
 
 def setup_directories():
-    """确保必要的目录存在"""
     os.makedirs(AUDIO_DIR, exist_ok=True)
     os.makedirs(PROCESSED_DIR, exist_ok=True)
     logger.info(f"已创建目录: {AUDIO_DIR}, {PROCESSED_DIR}")
@@ -91,7 +88,6 @@ def base64_to_pcm(base64_audio_data, volume_gain=2.0):
     audio_buffer = io.BytesIO(audio_bytes)
     
     try:
-        # 方法1: 使用wave库解析WAV文件
         with wave.open(audio_buffer, 'rb') as wav_file:
             # 获取音频参数
             frames = wav_file.getnframes()
@@ -174,9 +170,7 @@ def on_audio_done(audio_base64):
     total_chunks = (len(audio_bytes) + chunk_size - 1) // chunk_size
     
     for i in range(0, len(audio_bytes), chunk_size):
-        # 截取一块音频数据
         audio_chunk = audio_bytes[i:i+chunk_size]
-        # 发送数据块
         if not send_audio_chunk(ws, session_id_bytes, audio_chunk):
             logger.error(f"发送音频数据块失败: {i//chunk_size + 1}/{total_chunks}")
             break
@@ -186,16 +180,14 @@ def on_audio_done(audio_base64):
 
 
 def on_text_done(text):
-    """处理接收到的文本数据"""
     logger.info(f"💬 收到文本: {text}")
     # 这里可以添加文本处理逻辑，比如发送到WebSocket等
 
 
 def check_service_status(reference_audio_file):
     global minicpm_client
-    """检查本地服务接口的状态"""
     try:
-        # 检查MiniCPM服务状态
+        # 检查MiniCPM服务状态，初始化大模型，启动监听
         if USE_MINICPM:
             minicpm_client = MiniCPMClient(base_url=MINICPM_URL)
             response = minicpm_client.check_service_status()
@@ -213,7 +205,7 @@ def check_service_status(reference_audio_file):
                 return False
 
         else:
-            # 检查聊天服务状态
+            # 检查未审核聊天服务状态
             if USE_UNCENSORED:
                 response = requests.get(UNCENSORED_CHAT_STATUS_URL)
                 if response.status_code == 200:
@@ -229,7 +221,7 @@ def check_service_status(reference_audio_file):
                     logger.error(f"Qwen聊天服务状态检查失败: {response.status_code}")
                     return False
 
-            # 检查语音转文字服务状态
+            # 检查语音转文字服务状态，初始化语音转文字模型
             response = requests.get(SPEECH_TO_TEXT_STATUS_URL)
             if response.status_code == 200:
                 logger.info(f"语音转文字服务状态: {response.json()}")
@@ -244,21 +236,14 @@ def check_service_status(reference_audio_file):
     return True
 
 def speech_to_text(audio_path):
-    """调用本地服务接口将语音转换为文本"""
     try:
         logger.info(f"开始语音转文字请求: {audio_path}")
         
-        # 检查文件是否存在
         if not os.path.exists(audio_path):
             logger.error(f"音频文件不存在: {audio_path}")
             return None
-            
-        # 记录文件大小
-        file_size = os.path.getsize(audio_path)
-        logger.info(f"音频文件大小: {file_size} 字节")
         
         with open(audio_path, 'rb') as audio_file:
-            # 为文件指定名称、内容类型和文件对象
             files = {
                 'file': (os.path.basename(audio_path), 
                          audio_file, 
@@ -269,17 +254,12 @@ def speech_to_text(audio_path):
                 'Accept': 'application/json'
             }
             
-            logger.info(f"发送请求到: {SPEECH_TO_TEXT_URL}")
-            logger.info(f"请求头: {headers}")
-            logger.info(f"文件名: {os.path.basename(audio_path)}")
-            
             response = requests.post(SPEECH_TO_TEXT_URL, files=files, headers=headers)
             
             logger.info(f"收到响应: 状态码={response.status_code}")
             
             if response.status_code == 200:
                 result = response.json()
-                # 根据实际的返回格式解析
                 if result.get("code") == 0:
                     transcription = result.get("data", {}).get("transcription", "")
                     language = result.get("data", {}).get("language", "")
@@ -293,8 +273,6 @@ def speech_to_text(audio_path):
                 return None
     except Exception as e:
         logger.error(f"语音转文字接口调用失败: {str(e)}")
-        import traceback
-        logger.error(f"异常堆栈: {traceback.format_exc()}")
         return None
 
 def get_chat_response(prompt):
@@ -319,9 +297,7 @@ def get_chat_response(prompt):
         if response.status_code == 200:
             result = response.json()
             
-            # 正确解析API返回格式
             if result.get("code") == 0:
-                # 从data.response中获取助手回复
                 assistant_response = result.get("data", {}).get("response", "")
                 logger.info(f"{model_name}聊天请求成功，回复: {assistant_response[:50]}...")
                 return assistant_response
@@ -338,7 +314,6 @@ def get_chat_response(prompt):
         return None
 
 def text_to_speech(text, reference_audio_file):
-    """调用本地服务接口将文本转换为语音"""
     try:
         logger.info(f"发送文字转语音请求: 文本长度={len(text)}, 参考音频={reference_audio_file}")
         
@@ -417,15 +392,13 @@ def use_f5tts(text, reference_audio_file):
 
 
 def process_audio(raw_audio_data, session_id):
-    """处理音频数据的完整流程，支持选择不同的处理模式"""
     global reference_audio_file
     
     try:
-        # 生成唯一文件名
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         wav_file_path = os.path.join(AUDIO_DIR, f"audio_input_{session_id}_{timestamp}.wav")
         
-        # 将原始数据保存为WAV文件
+        # 将原始数据保存为WAV文件，给大模型处理
         with wave.open(wav_file_path, 'wb') as wav_file:
             wav_file.setnchannels(1)
             wav_file.setsampwidth(2)
@@ -433,14 +406,14 @@ def process_audio(raw_audio_data, session_id):
             wav_file.writeframes(raw_audio_data)
         logger.info(f"已保存WAV文件: {wav_file_path}")
         
-        # MiniCPM模式：直接将音频发送给MiniCPM处理
+        # MiniCPM模式：直接将音频发送给MiniCPM处理，返回音频和文本
         if USE_MINICPM:
             global minicpm_client
             logger.info("使用MiniCPM模式处理音频...")
             audio_resp, txt_resp = minicpm_client.test_chunked_audio_processing(wav_file_path)
             return audio_resp, txt_resp
 
-        # 常规模式：语音转文字 -> 聊天 -> 文字转语音
+        # 常规模式：语音转文字 -> 聊天 -> 文字转语音，返回音频和文本
         else:
             logger.info("开始语音识别...")
             transcript = speech_to_text(wav_file_path)
@@ -509,16 +482,13 @@ def send_audio_chunk(ws, session_id_bytes, audio_chunk, retry_count=0):
         return False
 
 def on_message(ws, message):
-    """处理接收到的消息"""
     try:
-        # 判断消息类型 - 文本还是二进制
         if isinstance(message, str):
             pass
 
         elif isinstance(message, bytes):
             binary_data = message
             
-            # 从二进制数据中提取会话ID（前16字节）和音频数据
             if len(binary_data) > 16:
                 # 提取会话ID（UUID格式，存储在前16字节）
                 global session_id_bytes
@@ -526,7 +496,6 @@ def on_message(ws, message):
                 raw_audio = binary_data[16:]
                 
                 try:
-                    # 将字节转换为UUID字符串
                     session_id = uuid.UUID(bytes=session_id_bytes).hex
                     # logger.info(f"收到音频数据: 会话ID = {session_id}, 大小 = {len(raw_audio)} 字节")
                     audio_response, text_response = process_audio(raw_audio, session_id)
@@ -537,9 +506,7 @@ def on_message(ws, message):
                         total_chunks = (len(audio_response) + chunk_size - 1) // chunk_size
                         
                         for i in range(0, len(audio_response), chunk_size):
-                            # 截取一块音频数据
                             audio_chunk = audio_response[i:i+chunk_size]
-                            # 发送数据块
                             if not send_audio_chunk(ws, session_id_bytes, audio_chunk):
                                 logger.error(f"发送音频数据块失败: {i//chunk_size + 1}/{total_chunks}")
                                 break
@@ -563,7 +530,6 @@ def on_message(ws, message):
 def start_websocket():
     global ws, reference_audio_file
 
-    """启动WebSocket连接"""
     ws = websocket.WebSocketApp(
         WS_URL,
         on_message=on_message,
@@ -588,42 +554,35 @@ def start_websocket():
         heartbeat_thread.join()
             
 def initialize_audio_categories():
-    """初始化音频分类"""
     global AUDIO_CATEGORIES
     voice_cat_file = Path("voice_cat.json")
     
     if voice_cat_file.exists():
-        # 如果voice_cat.json文件存在，直接加载分类信息
         with open(voice_cat_file, "r", encoding="utf-8") as f:
             AUDIO_CATEGORIES = json.load(f)
         logger.info("已从voice_cat.json加载音频分类信息")
     else:
-        # 如果voice_cat.json文件不存在，读取音频文件并生成分类信息
         assets_dir = Path("/data/MegaTTS3/assets")
         male_dir = assets_dir / "男"
         female_dir = assets_dir / "女"
         
         AUDIO_CATEGORIES = {}
         
-        # 处理"男"目录下的音频文件
         if male_dir.exists() and male_dir.is_dir():
             for file_path in male_dir.glob("*.wav"):
                 file_name = file_path.stem  # 获取文件名（不含扩展名）
                 AUDIO_CATEGORIES[file_name] = str(file_path)
         
-        # 处理"女"目录下的音频文件
         if female_dir.exists() and female_dir.is_dir():
             for file_path in female_dir.glob("*.wav"):
                 file_name = file_path.stem  # 获取文件名（不含扩展名）
                 AUDIO_CATEGORIES[file_name] = str(file_path)
         
-        # 将分类信息保存到voice_cat.json文件
         with open(voice_cat_file, "w", encoding="utf-8") as f:
             json.dump(AUDIO_CATEGORIES, f, ensure_ascii=False, indent=4)
         logger.info("已生成并保存音频分类信息到voice_cat.json")
 
 def main():
-    # 参数解析
     parser = argparse.ArgumentParser(description="AI音频处理客户端")
     parser.add_argument("--use-minicpm", action="store_true", 
                       help="使用MiniCPM大模型进行语音处理")
@@ -677,7 +636,6 @@ def main():
     asyncio.run(start_websocket())
 
 def send_heartbeat(ws):
-    """发送心跳包保持连接活跃"""
     try:
         if ws and ws.sock and ws.sock.connected:
             ws.send(json.dumps({"type": "heartbeat"}))
@@ -686,7 +644,6 @@ def send_heartbeat(ws):
         logger.error(f"发送心跳包失败: {str(e)}")
 
 def start_heartbeat(ws):
-    """启动心跳线程"""
     def heartbeat_thread():
         while True:
             try:
@@ -708,11 +665,9 @@ reconnect_delay_seconds = 5
 reconnect_attempt = 0
 
 def on_error(ws, error):
-    """处理错误"""
     logger.error(f"WebSocket错误: {error}")
 
 def on_close(ws, close_status_code, close_msg):
-    """处理连接关闭"""
     global reconnect_attempt, reconnect_delay_seconds, max_reconnect_attempts
     logger.warning(f"WebSocket连接已关闭: 状态码={close_status_code}, 消息={close_msg}")
     
@@ -728,7 +683,6 @@ def on_close(ws, close_status_code, close_msg):
         logger.error(f"达到最大重连次数 ({max_reconnect_attempts})，停止重连")
 
 def on_open(ws):
-    """处理连接成功"""
     global reconnect_attempt
     reconnect_attempt = 0
     
