@@ -197,7 +197,8 @@ def check_service_status(reference_audio_file):
                     reference_audio_file, 
                     0.7,
                     "你在扮演一个善于聊天，给别人提供情绪价值的角色。你能接受音频和文本输入并输出语音和文本。模仿输入音频中的声音特征。",
-                    "作为一个好的聊天伙伴，你将使用这种声音风格说话。"
+                    "作为一个好的聊天伙伴，你将使用这种声音风格说话。",
+                    True
                 )
                 minicpm_client.start_completions_listener(on_audio_done=on_audio_done, on_text_done=on_text_done)
             else:
