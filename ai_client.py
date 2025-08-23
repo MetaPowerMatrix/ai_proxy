@@ -17,6 +17,7 @@ from minicpm_client import MiniCPMClient
 import base64
 import io
 import numpy as np
+import librosa
 
 
 # 加载.env文件中的环境变量
@@ -131,9 +132,9 @@ def base64_to_pcm(base64_audio_data, volume_gain=2.0):
                 pcm_array = np.clip(pcm_array, -1.0, 1.0)  # float32范围是[-1.0, 1.0]
 
             # 如果sample_rate不是16000，则重采样到16000
-            # if sample_rate != 16000:
-            #     pcm_array = librosa.resample(pcm_array, orig_sr=sample_rate, target_sr=16000)
-            #     sample_rate = 16000
+            if sample_rate != 16000:
+                pcm_array = librosa.resample(pcm_array, orig_sr=sample_rate, target_sr=16000)
+                sample_rate = 16000
             
             # 如果是多声道，重塑数组
             if channels > 1:
