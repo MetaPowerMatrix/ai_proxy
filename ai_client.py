@@ -123,18 +123,21 @@ def base64_to_pcm(base64_audio_data, volume_gain=2.0):
             # pcm_float *= volume_gain
             # pcm_array = np.clip(pcm_float, -2147483648, 2147483647).astype(np.int32)
 
+            # 如果是多声道，重塑数组
+            if channels > 1:
+                # pcm_array = np.mean(pcm_array, axis=1)
+                pcm_array = pcm_array.reshape(-1, channels)
+                logger.info(f"重塑数组")
+
             # 如果sample_rate不是16000，则重采样到16000
             if sample_rate != 16000:
                 pcm_array = librosa.resample(pcm_float, orig_sr=sample_rate, target_sr=16000, res_type='kaiser_best')
                 sample_rate = 16000
+                logger.info(f"重采样到16000Hz")
             
-            # 如果是多声道，重塑数组
-            if channels > 1:
-                pcm_array = np.mean(pcm_array, axis=1)
-                # pcm_array = pcm_array.reshape(-1, channels)
             
             # 重要：将float转回int16 PCM格式
-            pcm_array = np.clip(pcm_float * 32768.0, -32768, 32767).astype(np.int16)
+            pcm_array = np.clip(pcm_array * 32768.0, -32768, 32767).astype(np.int16)
 
             return pcm_array, sample_rate, channels
             
