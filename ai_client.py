@@ -133,6 +133,9 @@ def base64_to_pcm(base64_audio_data, volume_gain=2.0):
                 pcm_array = np.mean(pcm_array, axis=1)
                 # pcm_array = pcm_array.reshape(-1, channels)
             
+            # 重要：将float转回int16 PCM格式
+            pcm_array = np.clip(pcm_float * 32768.0, -32768, 32767).astype(np.int16)
+
             return pcm_array, sample_rate, channels
             
     except Exception as e:
@@ -142,22 +145,26 @@ def on_audio_done(audio_base64):
     global ws, session_id_bytes
 
     pcm_data = base64_to_pcm(audio_base64)
-    if pcm_data[0].size > 0:
-        audio_chunks = pcm_data[0]
-    else:
+    if pcm_data[0] is None or pcm_data[0].size == 0:
         logger.error("无法将音频数据转换为字节格式")
         return
 
-    # 将NumPy数组转换为字节数据
-    if hasattr(audio_chunks, 'tobytes'):
-        audio_bytes = audio_chunks.tobytes()
-        logger.info(f"✅ 成功转换为字节数据: {len(audio_bytes)} 字节")
-    elif hasattr(audio_chunks, 'tostring'):
-        audio_bytes = audio_chunks.tostring()
-        logger.info(f"✅ 成功转换为字节数据: {len(audio_bytes)} 字节")
-    else:
-        logger.error("无法将音频数据转换为字节格式")
-        return
+    audio_chunks = pcm_data[0]  # 这里已经是int16格式的PCM数据
+    
+    # 直接转换为字节数据
+    audio_bytes = audio_chunks.tobytes()
+    logger.info(f"✅ 成功转换为字节数据: {len(audio_bytes)} 字节")
+
+    # # 将NumPy数组转换为字节数据
+    # if hasattr(audio_chunks, 'tobytes'):
+    #     audio_bytes = audio_chunks.tobytes()
+    #     logger.info(f"✅ 成功转换为字节数据: {len(audio_bytes)} 字节")
+    # elif hasattr(audio_chunks, 'tostring'):
+    #     audio_bytes = audio_chunks.tostring()
+    #     logger.info(f"✅ 成功转换为字节数据: {len(audio_bytes)} 字节")
+    # else:
+    #     logger.error("无法将音频数据转换为字节格式")
+    #     return
     
     # 发送音频回复 - 分块发送
     chunk_size = WS_CHUNK_SIZE
