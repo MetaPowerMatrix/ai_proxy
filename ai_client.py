@@ -112,19 +112,19 @@ def base64_to_pcm(base64_audio_data, volume_gain=2.0):
                 dtype = np.float32
                 
             pcm_array = np.frombuffer(pcm_data, dtype)
-            pcm_float = pcm_array.astype(np.float32)
+            pcm_float = pcm_array.astype(np.float32) / 32768.0
 
             # 根据数据类型进行音量放大，避免溢出
             if dtype == np.int32:
-                pcm_float = pcm_array.astype(np.float64)
+                pcm_float = pcm_array.astype(np.float64) / 2147483648.0
 
             # pcm_float *= volume_gain
             # pcm_array = np.clip(pcm_float, -2147483648, 2147483647).astype(np.int32)
 
             # 如果sample_rate不是16000，则重采样到16000
-            # if sample_rate != 16000:
-            #     pcm_array = librosa.resample(pcm_float, orig_sr=sample_rate, target_sr=16000)
-            #     sample_rate = 16000
+            if sample_rate != 16000:
+                pcm_array = librosa.resample(pcm_float, orig_sr=sample_rate, target_sr=16000)
+                sample_rate = 16000
             
             # 如果是多声道，重塑数组
             if channels > 1:
