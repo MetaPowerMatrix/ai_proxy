@@ -112,24 +112,14 @@ def base64_to_pcm(base64_audio_data, volume_gain=2.0):
                 dtype = np.float32
                 
             pcm_array = np.frombuffer(pcm_data, dtype)
+            pcm_float = pcm_array.astype(np.float32)
 
             # 根据数据类型进行音量放大，避免溢出
-            if dtype == np.int16:
-                # 对于int16，先转换为float32进行计算，避免溢出
-                pcm_float = pcm_array.astype(np.float32)
-                pcm_float *= volume_gain
-                pcm_array = np.clip(pcm_float, -32768, 32767).astype(np.int16)
-            elif dtype == np.int32:
+            if dtype == np.int32:
                 pcm_float = pcm_array.astype(np.float64)
-                pcm_float *= volume_gain
-                pcm_array = np.clip(pcm_float, -2147483648, 2147483647).astype(np.int32)
-            elif dtype == np.uint8:
-                pcm_float = pcm_array.astype(np.float32)
-                pcm_float = (pcm_float - 128) * volume_gain + 128  # uint8中心点是128
-                pcm_array = np.clip(pcm_float, 0, 255).astype(np.uint8)
-            else:  # float32
-                pcm_array *= volume_gain
-                pcm_array = np.clip(pcm_array, -1.0, 1.0)  # float32范围是[-1.0, 1.0]
+
+            # pcm_float *= volume_gain
+            # pcm_array = np.clip(pcm_float, -2147483648, 2147483647).astype(np.int32)
 
             # 如果sample_rate不是16000，则重采样到16000
             if sample_rate != 16000:
