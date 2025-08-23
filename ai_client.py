@@ -100,7 +100,6 @@ def base64_to_pcm(base64_audio_data, volume_gain=2.0):
             
             # 读取PCM数据
             pcm_data = wav_file.readframes(frames)
-            pcm_array = np.frombuffer(pcm_data, dtype)
             
             # 转换为numpy数组
             if sample_width == 1:
@@ -112,6 +111,8 @@ def base64_to_pcm(base64_audio_data, volume_gain=2.0):
             else:
                 dtype = np.float32
                 
+            pcm_array = np.frombuffer(pcm_data, dtype)
+
             if sample_width == 1:
                 pcm_float = pcm_array.astype(np.float32) / 128.0 - 1.0  # 将 uint8 转换为 -1.0 到 1.0
             elif sample_width == 2:
