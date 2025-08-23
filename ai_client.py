@@ -133,7 +133,7 @@ def base64_to_pcm(base64_audio_data, volume_gain=2.0):
 
             # 如果sample_rate不是16000，则重采样到16000
             if sample_rate != 16000:
-                pcm_array = librosa.resample(pcm_array, orig_sr=sample_rate, target_sr=16000)
+                pcm_array = librosa.resample(pcm_float, orig_sr=sample_rate, target_sr=16000)
                 sample_rate = 16000
             
             # 如果是多声道，重塑数组
