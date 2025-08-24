@@ -12,6 +12,7 @@ import threading
 import os
 import tempfile
 import queue  # 添加队列支持
+import uuid
 
 
 def save_pcm_as_wav(pcm_data, sample_rate, channels, output_file):
@@ -28,7 +29,7 @@ class MiniCPMClient:
     def __init__(self, base_url="http://localhost:32550", volume_gain=2.0):
         self.base_url = base_url
         self.session = requests.Session()
-        self.uid = f"proxy_client_001"
+        self.uid = str(uuid.uuid4())
         self.responses = []
         self.session_id = None
         
