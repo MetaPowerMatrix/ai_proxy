@@ -120,20 +120,15 @@ def base64_to_pcm(base64_audio_data, volume_gain=2.0):
             elif sample_width == 4:
                 pcm_float = pcm_array.astype(np.float64) / 2147483648.0  # 将 int32 转换为 -1.0 到 1.0                
 
-            # pcm_float *= volume_gain
-            # pcm_array = np.clip(pcm_float, -2147483648, 2147483647).astype(np.int32)
-
             # 如果是多声道，重塑数组
             if channels > 1:
                 # pcm_array = np.mean(pcm_array, axis=1)
                 pcm_array = pcm_array.reshape(-1, channels)
-                logger.info(f"重塑数组")
 
             # 如果sample_rate不是16000，则重采样到16000
             if sample_rate != 16000:
                 pcm_array = librosa.resample(pcm_float, orig_sr=sample_rate, target_sr=16000, res_type='kaiser_best')
                 sample_rate = 16000
-                logger.info(f"重采样到16000Hz")
             
             
             # 重要：将float转回int16 PCM格式
@@ -158,17 +153,6 @@ def on_audio_done(audio_base64):
     audio_bytes = audio_chunks.tobytes()
     logger.info(f"✅ 成功转换为字节数据: {len(audio_bytes)} 字节")
 
-    # # 将NumPy数组转换为字节数据
-    # if hasattr(audio_chunks, 'tobytes'):
-    #     audio_bytes = audio_chunks.tobytes()
-    #     logger.info(f"✅ 成功转换为字节数据: {len(audio_bytes)} 字节")
-    # elif hasattr(audio_chunks, 'tostring'):
-    #     audio_bytes = audio_chunks.tostring()
-    #     logger.info(f"✅ 成功转换为字节数据: {len(audio_bytes)} 字节")
-    # else:
-    #     logger.error("无法将音频数据转换为字节格式")
-    #     return
-    
     # 发送音频回复 - 分块发送
     chunk_size = WS_CHUNK_SIZE
     total_chunks = (len(audio_bytes) + chunk_size - 1) // chunk_size
