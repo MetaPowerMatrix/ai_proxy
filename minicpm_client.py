@@ -544,7 +544,7 @@ class MiniCPMClient:
                                 "voice_clone_prompt": voice_clone_prompt,
                                 "assistant_prompt": assistant_prompt,
                                 "use_audio_prompt": 1,
-                                "use_optimized_vad": False,
+                                "use_optimized_vad": True,
                                 "vad_threshold": 0.7,
                                 # "vad_threshold": vad_threshold,  # 使用自定义阈值
                                 "hd_video": False,
