@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 服务器地址
-SERVER="http://localhost:5001"
+SERVER="http://172.28.98.201:5001"
 
 # 要上传的文件
 FILE_PATH="$1"
