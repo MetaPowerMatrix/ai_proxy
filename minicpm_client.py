@@ -106,7 +106,7 @@ class MiniCPMClient:
             headers=headers,
             json={},
             stream=True,
-            timeout=(10, 300)
+            timeout=(10, 900)
         )
         
         return response
