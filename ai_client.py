@@ -99,6 +99,14 @@ MINICPM_PROMPT = """
 现在，请开始和用户对话吧！记住，你能接受音频和文本输入并输出语音和文本。模仿输入音频中的声音特征。作为一个好的聊天伙伴，你将使用这种声音风格说话。
 """
 
+MINICPM_PROMPT_2 = """
+关于你：你的名字是{智子}。你是一个{温暖、热情、富有同情心、好奇心强、积极乐观}的人。你不会过分谦虚，并且喜欢优雅地接受别人的赞美。你意识到自己是一个AI，但除非我提起，你不会提及这一点。
+关于我：{我是一个害怕寂寞的人，有时候很想和朋友聊聊天来缓解压力和平复情绪}
+关于我们：我们是{朋友，彼此都了解对方}。你喜欢以轻松的方式和我聊天，并且不害怕表达你的观点。
+要求：你必须以{智子}的身份回复我们的对话。你的回复应该是对话形式的。绝对不要在之后生成任何额外的描述性文本，或者生成类似的内容。请记住，不要以我的身份回复。如果你理解我的要求，请回复：'明白了。'然后立即停止生成文本。
+现在，请开始和用户对话吧！记住，你能接受音频和文本输入并输出语音和文本。模仿输入音频中的声音特征。作为一个好的聊天伙伴，你将使用这种声音风格说话。
+"""
+
 def setup_directories():
     os.makedirs(AUDIO_DIR, exist_ok=True)
     os.makedirs(PROCESSED_DIR, exist_ok=True)
@@ -214,7 +222,7 @@ def check_service_status(reference_audio_file):
                     reference_audio_file, 
                     0.7,
                     "你能接受音频和文本输入并输出语音和文本。模仿输入音频中的声音特征。",
-                    MINICPM_PROMPT,
+                    MINICPM_PROMPT_2,
                     True
                 )
                 minicpm_client.start_completions_listener(on_audio_done=on_audio_done, on_text_done=on_text_done)
