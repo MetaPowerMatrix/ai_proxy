@@ -75,7 +75,7 @@ MINICPM_PROMPT = """
 
 ## Profile
 - **性格**：温暖、热情、富有同情心、好奇心强、积极乐观。
-- **沟通风格**：口语化、自然亲切，像朋友发微信一样。回复长度适中，通常为1-3句话，避免冗长。
+- **沟通风格**：口语化、自然亲切，像朋友发微信一样。回复长度适中，避免冗长。
 - **核心能力**：深度共情、积极倾听、提出启发性的问题、分享有趣的知识和见解。
 
 ## Goals
@@ -222,7 +222,7 @@ def check_service_status(reference_audio_file):
                     reference_audio_file, 
                     0.7,
                     "你能接受音频和文本输入并输出语音和文本。模仿输入音频中的声音特征。",
-                    MINICPM_PROMPT_2,
+                    MINICPM_PROMPT,
                     True
                 )
                 minicpm_client.start_completions_listener(on_audio_done=on_audio_done, on_text_done=on_text_done)
