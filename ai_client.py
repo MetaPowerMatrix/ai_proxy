@@ -567,7 +567,7 @@ def start_websocket():
     ws.on_open = on_open
     
     # 启动心跳线程
-    heartbeat_thread = start_heartbeat(ws)
+    # heartbeat_thread = start_heartbeat(ws)
 
     # 设置WebSocket选项
     ws.run_forever(
@@ -576,8 +576,8 @@ def start_websocket():
     )
     
     # 等待心跳线程结束
-    if heartbeat_thread:
-        heartbeat_thread.join()
+    # if heartbeat_thread:
+    #     heartbeat_thread.join()
             
 def initialize_audio_categories():
     global AUDIO_CATEGORIES
@@ -703,7 +703,7 @@ def on_close(ws, close_status_code, close_msg):
         logger.info(f"将在 {reconnect_delay_seconds} 秒后尝试重新连接...")
         time.sleep(reconnect_delay_seconds)
         # 指数退避算法增加重连延迟
-        reconnect_delay_seconds = min(60, reconnect_delay_seconds * 1.5)
+        # reconnect_delay_seconds = min(60, reconnect_delay_seconds * 1.5)
         start_websocket()
     else:
         logger.error(f"达到最大重连次数 ({max_reconnect_attempts})，停止重连")
