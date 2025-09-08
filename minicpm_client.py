@@ -640,7 +640,6 @@ class MiniCPMClient:
         successful_chunks = 0
         failed_chunks = 0
         
-        
         for i, chunk in enumerate(chunks):
             try:
                 # 判断是否为最后一个片段
