@@ -436,7 +436,7 @@ def process_audio(raw_audio_data, session_id):
         if USE_MINICPM:
             global minicpm_client
             logger.info("使用MiniCPM模式处理音频...")
-            audio_resp, txt_resp = minicpm_client.test_chunked_audio_processing(wav_file_path)
+            audio_resp, txt_resp = minicpm_client.test_chunked_audio_processing(wav_file_path, skip_chunked_audio=True)
             return audio_resp, txt_resp
 
         # 常规模式：语音转文字 -> 聊天 -> 文字转语音，返回音频和文本
