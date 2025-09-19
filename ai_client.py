@@ -36,7 +36,7 @@ AUDIO_DIR = os.getenv("AUDIO_DIR", "audio_files")
 PROCESSED_DIR = os.getenv("PROCESSED_DIR", "processed_files")
 
 # WS_URL = os.getenv("WS_URL", "ws://stream.kalaisai.com:80/ws/proxy")
-WS_URL = os.getenv("WS_URL", "ws://127.0.0.1:8001/proxy")
+WS_URL = os.getenv("WS_URL", "ws://127.0.0.1:8001/ws/proxy")
 API_URL = "http://127.0.0.1:8000/api/v1"
 SPEECH_TO_TEXT_URL = f"{API_URL}/speech-to-text"
 MEGATTS_URL = f"http://127.0.0.1:5000/process"
