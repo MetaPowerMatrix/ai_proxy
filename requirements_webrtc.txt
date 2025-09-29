@@ -1,0 +1,22 @@
+# WebRTC AI Client Requirements
+
+# Core WebRTC dependencies
+aiortc>=1.6.0
+websockets>=11.0
+av>=10.0.0
+
+# Audio processing
+librosa>=0.10.0
+numpy>=1.24.0
+pydub>=0.25.1
+
+# HTTP and API clients
+requests>=2.31.0
+gradio-client>=0.7.0
+
+# Utilities
+python-dotenv>=1.0.0
+pathlib>=1.0.0
+
+# Existing dependencies from original requirements
+# Add other dependencies from the original requirements.txt as needed
