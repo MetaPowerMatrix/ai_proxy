@@ -2,15 +2,17 @@
 """
 Janus WebRTC Python客户端
 用于与ESP32-S3语音助手进行音频通信（静态SRTP版本）
+以及支持WebRTC音频流传输
 
 功能：
 1. 通过Janus Gateway连接到ESP32-S3
 2. 发送和接收Opus音频数据
 3. 支持静态SRTP密钥配置
 4. 实时音频播放和录制
+5. WebRTC音频流传输支持
 
 依赖：
-pip install requests websockets pyaudio opus-python cryptography
+pip install requests websockets pyaudio opus-python cryptography aiortc av
 
 作者：Claude Code
 """
@@ -25,535 +27,454 @@ from typing import Optional, Dict, Any
 import socket
 import hashlib
 import hmac
+import os
 
 import requests
 import pyaudio
 import opus
+import numpy as np
+from aiortc import RTCPeerConnection, RTCSessionDescription, MediaStreamTrack
+from queue import Queue
 
 # 配置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-class JanusClient:
-    """Janus WebRTC Gateway客户端"""
+class AudioReceiveTrack(MediaStreamTrack):
+    """
+    接收来自Janus的音频轨道
+    """
+    kind = "audio"
 
-    def __init__(self, server_url: str = "http://119.136.26.222:8088",
-                 admin_key: str = "janusoverlord"):
-        self.server_url = server_url.rstrip('/')
-        self.admin_key = admin_key
-        self.session_id: Optional[int] = None
-        self.handle_id: Optional[int] = None
-        self.plugin_name = "janus.plugin.echotest"
+    def __init__(self, audio_queue):
+        super().__init__()
+        self.audio_queue = audio_queue
+        self.audio_buffer = b""
+        self.buffer_size = 16000 * 2  # 1秒的16kHz 16位音频
 
-        # 音频配置
-        self.sample_rate = 16000
-        self.channels = 1
-        self.frame_duration = 20  # ms
-        self.opus_frame_size = int(self.sample_rate * self.frame_duration / 1000)
+    async def recv(self):
+        """
+        接收音频帧并处理
+        """
+        frame = await super().recv()
+        
+        # 将音频帧转换为PCM数据
+        if frame:
+            # 获取音频数据
+            audio_data = frame.to_ndarray()
+            
+            # 如果是多声道，转换为单声道
+            if len(audio_data.shape) > 1 and audio_data.shape[0] > 1:
+                audio_data = np.mean(audio_data, axis=0)
+            elif len(audio_data.shape) > 1:
+                audio_data = audio_data[0]  # 取第一个声道
+            
+            # 转换为16位PCM格式
+            if audio_data.dtype != np.int16:
+                # 假设输入是float32格式，范围[-1, 1]
+                audio_data = np.clip(audio_data * 32767, -32768, 32767).astype(np.int16)
+            
+            # 添加到缓冲区
+            audio_bytes = audio_data.tobytes()
+            self.audio_buffer += audio_bytes
+            
+            # 当缓冲区达到一定大小时，处理音频数据
+            if len(self.audio_buffer) >= self.buffer_size:
+                self.audio_queue.put(self.audio_buffer)
+                logger.info(f"收到音频数据: {len(self.audio_buffer)} 字节")
+                self.audio_buffer = b""
+        
+        return frame
 
-        # SRTP配置（与ESP32端保持一致）
-        self.static_srtp_key = bytes([
-            # Master Key (16 bytes)
-            0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF,
-            0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54, 0x32, 0x10,
-            # Master Salt (14 bytes)
-            0x0F, 0x0E, 0x0D, 0x0C, 0x0B, 0x0A, 0x09, 0x08,
-            0x07, 0x06, 0x05, 0x04, 0x03, 0x02
-        ])
+class AudioSendTrack(MediaStreamTrack):
+    """
+    发送音频轨道到Janus
+    """
+    kind = "audio"
 
-        # RTP配置
-        self.ssrc = 0x87654321  # 与ESP32不同的SSRC
-        self.sequence_number = 1000
-        self.timestamp = int(time.time() * self.sample_rate) & 0xFFFFFFFF
+    def __init__(self, response_queue):
+        super().__init__()
+        self.response_queue = response_queue
+        self._timestamp = 0
+        self._sample_rate = 16000
+        self._samples_per_frame = int(self._sample_rate * 0.02)  # 20ms frames
+        self._current_audio = None
+        self._audio_position = 0
 
-        # UDP套接字
-        self.rtp_socket: Optional[socket.socket] = None
-        self.esp32_address: Optional[tuple] = None
+    async def recv(self):
+        """
+        发送音频帧
+        """
+        import av
+        
+        # 检查是否需要新的音频数据
+        if self._current_audio is None or self._audio_position >= len(self._current_audio):
+            if not self.response_queue.empty():
+                audio_data = self.response_queue.get()
+                self._current_audio = np.frombuffer(audio_data, dtype=np.int16)
+                self._audio_position = 0
+                logger.info(f"获取新的音频数据: {len(self._current_audio)} 样本")
+        
+        # 准备音频帧数据
+        if self._current_audio is not None and self._audio_position < len(self._current_audio):
+            # 获取当前帧的音频数据
+            end_pos = min(self._audio_position + self._samples_per_frame, len(self._current_audio))
+            frame_data = self._current_audio[self._audio_position:end_pos]
+            
+            # 如果数据不够一帧，用零填充
+            if len(frame_data) < self._samples_per_frame:
+                padding = np.zeros(self._samples_per_frame - len(frame_data), dtype=np.int16)
+                frame_data = np.concatenate([frame_data, padding])
+            
+            self._audio_position = end_pos
+            
+            # 如果音频播放完毕，清空当前音频
+            if self._audio_position >= len(self._current_audio):
+                self._current_audio = None
+                self._audio_position = 0
+        else:
+            # 没有音频数据，发送静音
+            frame_data = np.zeros(self._samples_per_frame, dtype=np.int16)
+        
+        # 创建音频帧
+        frame = av.AudioFrame.from_ndarray(
+            frame_data.reshape(1, -1), 
+            format='s16', 
+            layout='mono'
+        )
+        frame.sample_rate = self._sample_rate
+        frame.pts = self._timestamp
+        
+        self._timestamp += self._samples_per_frame
+        return frame
 
-        # Opus编解码器
-        self.opus_encoder = opus.Encoder(self.sample_rate, self.channels, opus.APPLICATION_VOIP)
-        self.opus_decoder = opus.Decoder(self.sample_rate, self.channels)
+class JanusSignaling:
+    """
+    Janus WebRTC网关信令处理
+    """
+    def __init__(self, url, plugin="janus.plugin.audiobridge"):
+        self.url = url
+        self.plugin = plugin
+        self.websocket = None
+        self.session_id = None
+        self.handle_id = None
+        self.transaction_id = 0
 
-        # PyAudio
-        self.audio = pyaudio.PyAudio()
-        self.input_stream: Optional[pyaudio.Stream] = None
-        self.output_stream: Optional[pyaudio.Stream] = None
+    async def connect(self):
+        """连接到Janus网关"""
+        import websockets
+        
+        try:
+            self.websocket = await websockets.connect(self.url)
+            logger.info(f"已连接到Janus网关: {self.url}")
+            
+            # 创建会话
+            await self.create_session()
+            
+            # 附加到audiobridge插件
+            await self.attach_plugin()
+            
+            return True
+        except Exception as e:
+            logger.error(f"连接Janus网关失败: {e}")
+            return False
 
-        # 控制标志
-        self.running = False
-        self.connected = False
-
-    def create_session(self) -> bool:
+    async def create_session(self):
         """创建Janus会话"""
-        try:
-            url = f"{self.server_url}/janus"
-            data = {
-                "janus": "create",
-                "transaction": self._generate_transaction_id()
+        self.transaction_id += 1
+        message = {
+            "janus": "create",
+            "transaction": str(self.transaction_id)
+        }
+        
+        await self.websocket.send(json.dumps(message))
+        response = await self.websocket.recv()
+        data = json.loads(response)
+        
+        if data.get("janus") == "success":
+            self.session_id = data["data"]["id"]
+            logger.info(f"Janus会话创建成功: {self.session_id}")
+        else:
+            raise Exception(f"创建Janus会话失败: {data}")
+
+    async def attach_plugin(self):
+        """附加到audiobridge插件"""
+        self.transaction_id += 1
+        message = {
+            "janus": "attach",
+            "plugin": self.plugin,
+            "transaction": str(self.transaction_id),
+            "session_id": self.session_id
+        }
+        
+        await self.websocket.send(json.dumps(message))
+        response = await self.websocket.recv()
+        data = json.loads(response)
+        
+        if data.get("janus") == "success":
+            self.handle_id = data["data"]["id"]
+            logger.info(f"已附加到audiobridge插件: {self.handle_id}")
+        else:
+            raise Exception(f"附加插件失败: {data}")
+
+    async def join_room(self, room_id, display_name="Agent"):
+        """加入音频房间"""
+        self.transaction_id += 1
+        message = {
+            "janus": "message",
+            "transaction": str(self.transaction_id),
+            "session_id": self.session_id,
+            "handle_id": self.handle_id,
+            "body": {
+                "request": "join",
+                "room": room_id,
+                "display": display_name,
+                "pin": "1234",
+                "muted": False,
+                "quality": 4
             }
+        }
+        
+        await self.websocket.send(json.dumps(message))
+        response = await self.websocket.recv()
+        data = json.loads(response)
+        
+        if data.get("janus") == "success":
+            logger.info(f"已加入音频房间: {room_id}")
+        else:
+            raise Exception(f"加入房间失败: {data}")
 
-            logger.info("创建Janus会话...")
-            response = requests.post(url, json=data, timeout=10)
-            response.raise_for_status()
+    async def send_offer(self, offer):
+        """发送SDP offer"""
+        self.transaction_id += 1
+        message = {
+            "janus": "message",
+            "transaction": str(self.transaction_id),
+            "session_id": self.session_id,
+            "handle_id": self.handle_id,
+            "body": {
+                "request": "configure",
+                "audio": True,
+                "video": False
+            },
+            "jsep": {
+                "type": "offer",
+                "sdp": offer.sdp
+            }
+        }
+        
+        await self.websocket.send(json.dumps(message))
 
-            result = response.json()
-            if result.get("janus") == "success":
-                self.session_id = result["data"]["id"]
-                logger.info(f"会话创建成功, ID: {self.session_id}")
+    async def receive_answer(self):
+        """接收SDP answer"""
+        while True:
+            response = await self.websocket.recv()
+            data = json.loads(response)
+            
+            if "jsep" in data and data["jsep"]["type"] == "answer":
+                return RTCSessionDescription(
+                    sdp=data["jsep"]["sdp"],
+                    type="answer"
+                )
+            
+            # 处理其他消息类型
+            if data.get("janus") == "event":
+                logger.info(f"收到Janus事件: {data}")
+
+    async def close(self):
+        """关闭连接"""
+        if self.websocket:
+            await self.websocket.close()
+            logger.info("已关闭Janus连接")
+
+class JanusWebRTCClient:
+    """
+    Janus WebRTC客户端 - 支持音频流传输
+    """
+    def __init__(self, janus_url: str = "ws://119.136.26.222:18001/janus-protocol", 
+                 plugin: str = "janus.plugin.audiobridge",
+                 room_id: int = 1234):
+        self.janus_url = janus_url
+        self.plugin = plugin
+        self.room_id = room_id
+        
+        # WebRTC连接
+        self.webrtc_connection: Optional[RTCPeerConnection] = None
+        self.signaling: Optional[JanusSignaling] = None
+        
+        # 音频队列
+        self.audio_queue = Queue()
+        self.response_queue = Queue()
+        
+        # 音频轨道
+        self.audio_receive_track: Optional[AudioReceiveTrack] = None
+        self.audio_send_track: Optional[AudioSendTrack] = None
+        
+        # 状态标志
+        self.connected = False
+        self.running = False
+
+    async def setup_webrtc_connection(self):
+        """建立WebRTC连接"""
+        try:
+            # 创建RTCPeerConnection
+            self.webrtc_connection = RTCPeerConnection()
+            
+            # 创建音频发送轨道并添加到连接
+            self.audio_send_track = AudioSendTrack(self.response_queue)
+            self.webrtc_connection.addTrack(self.audio_send_track)
+            
+            # 设置轨道处理器 - 处理接收到的音频轨道
+            @self.webrtc_connection.on("track")
+            def on_track(track):
+                logger.info(f"收到轨道: {track.kind}")
+                if track.kind == "audio":
+                    logger.info("开始处理接收到的音频轨道")
+                    # 创建音频接收轨道
+                    self.audio_receive_track = AudioReceiveTrack(self.audio_queue)
+                    # 启动音频轨道处理任务
+                    asyncio.create_task(self.process_audio_track(track))
+            
+            # 设置连接状态监听器
+            @self.webrtc_connection.on("connectionstatechange")
+            async def on_connectionstatechange():
+                logger.info(f"WebRTC连接状态: {self.webrtc_connection.connectionState}")
+                if self.webrtc_connection.connectionState == "failed":
+                    logger.error("WebRTC连接失败，尝试重新连接")
+                    await self.handle_webrtc_reconnect()
+            
+            # 创建Janus信令连接
+            self.signaling = JanusSignaling(self.janus_url, self.plugin)
+            if not await self.signaling.connect():
+                logger.error("Janus信令连接失败")
+                return False
+            
+            # 加入音频房间
+            await self.signaling.join_room(self.room_id)
+            
+            # 创建offer
+            offer = await self.webrtc_connection.createOffer()
+            await self.webrtc_connection.setLocalDescription(offer)
+            
+            # 发送offer到Janus
+            await self.signaling.send_offer(offer)
+            
+            # 接收answer
+            answer = await self.signaling.receive_answer()
+            if answer:
+                await self.webrtc_connection.setRemoteDescription(answer)
+                logger.info("WebRTC连接建立成功")
+                self.connected = True
                 return True
             else:
-                logger.error(f"会话创建失败: {result}")
+                logger.error("未收到Janus的answer")
                 return False
-
+            
         except Exception as e:
-            logger.error(f"创建会话异常: {e}")
+            logger.error(f"建立WebRTC连接失败: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return False
 
-    def attach_plugin(self) -> bool:
-        """附加到EchoTest插件"""
+    async def process_audio_track(self, track):
+        """处理音频轨道"""
         try:
-            url = f"{self.server_url}/janus/{self.session_id}"
-            data = {
-                "janus": "attach",
-                "plugin": self.plugin_name,
-                "transaction": self._generate_transaction_id()
-            }
-
-            logger.info(f"附加插件: {self.plugin_name}")
-            response = requests.post(url, json=data, timeout=10)
-            response.raise_for_status()
-
-            result = response.json()
-            if result.get("janus") == "success":
-                self.handle_id = result["data"]["id"]
-                logger.info(f"插件附加成功, Handle ID: {self.handle_id}")
-                return True
-            else:
-                logger.error(f"插件附加失败: {result}")
-                return False
-
+            while True:
+                frame = await track.recv()
+                if frame:
+                    # 处理音频帧
+                    if self.audio_receive_track:
+                        await self.audio_receive_track.recv()
         except Exception as e:
-            logger.error(f"附加插件异常: {e}")
+            logger.error(f"音频轨道处理失败: {e}")
+
+    async def handle_webrtc_reconnect(self):
+        """处理WebRTC重连"""
+        logger.info("开始WebRTC重连...")
+        self.connected = False
+        
+        # 关闭现有连接
+        if self.webrtc_connection:
+            await self.webrtc_connection.close()
+        
+        if self.signaling:
+            await self.signaling.close()
+        
+        # 等待一段时间后重连
+        await asyncio.sleep(5)
+        
+        # 重新建立连接
+        await self.setup_webrtc_connection()
+
+    async def start(self):
+        """启动WebRTC客户端"""
+        logger.info("启动Janus WebRTC客户端...")
+        
+        # 建立WebRTC连接
+        if not await self.setup_webrtc_connection():
+            logger.error("WebRTC连接建立失败")
             return False
-
-    def send_offer(self) -> bool:
-        """发送WebRTC Offer"""
-        try:
-            # 创建SDP Offer（静态SRTP版本）
-            sdp_offer = self._create_sdp_offer()
-
-            url = f"{self.server_url}/janus/{self.session_id}/{self.handle_id}"
-            data = {
-                "janus": "message",
-                "transaction": self._generate_transaction_id(),
-                "body": {
-                    "request": "configure",
-                    "audio": True,
-                    "video": False
-                },
-                "jsep": {
-                    "type": "offer",
-                    "sdp": sdp_offer
-                }
-            }
-
-            logger.info("发送WebRTC Offer...")
-            response = requests.post(url, json=data, timeout=10)
-            response.raise_for_status()
-
-            result = response.json()
-            logger.info(f"Offer响应: {result}")
-
-            # 解析answer SDP获取远端信息
-            if "jsep" in result and result["jsep"]["type"] == "answer":
-                self._parse_answer_sdp(result["jsep"]["sdp"])
-                return True
-            else:
-                logger.error("未收到SDP Answer")
-                return False
-
-        except Exception as e:
-            logger.error(f"发送Offer异常: {e}")
-            return False
-
-    def _create_sdp_offer(self) -> str:
-        """创建SDP Offer（支持静态SRTP）"""
-        import base64
-
-        # 将静态SRTP密钥编码为base64
-        key_base64 = base64.b64encode(self.static_srtp_key).decode()
-
-        sdp = f"""v=0
-o=janus 123456789 2 IN IP4 127.0.0.1
-s=Janus Python Client
-t=0 0
-a=group:BUNDLE 0
-a=msid-semantic: WMS janus
-m=audio 9 RTP/SAVPF 111
-c=IN IP4 0.0.0.0
-a=rtcp:9 IN IP4 0.0.0.0
-a=mid:0
-a=sendrecv
-a=rtcp-mux
-a=rtpmap:111 opus/48000/2
-a=rtcp-fb:111 transport-cc
-a=fmtp:111 minptime=10;useinbandfec=1
-a=crypto:1 AES_CM_128_HMAC_SHA1_80 inline:{key_base64}
-a=ssrc:{self.ssrc} cname:janus-python-client
-a=ssrc:{self.ssrc} msid:janus audio0
-a=ssrc:{self.ssrc} mslabel:janus
-a=ssrc:{self.ssrc} label:audio0
-"""
-
-        return sdp.replace('\n', '\r\n')
-
-    def _parse_answer_sdp(self, sdp: str) -> None:
-        """解析Answer SDP获取远端RTP信息"""
-        lines = sdp.split('\r\n')
-
-        for line in lines:
-            # 查找连接信息
-            if line.startswith('c=IN IP4'):
-                ip = line.split()[-1]
-                if ip != '0.0.0.0':
-                    logger.info(f"远端IP: {ip}")
-
-            # 查找音频端口
-            elif line.startswith('m=audio'):
-                parts = line.split()
-                if len(parts) >= 2:
-                    port = int(parts[1])
-                    logger.info(f"远端RTP端口: {port}")
-                    # 设置ESP32地址（假设与Janus在同一服务器）
-                    server_ip = self.server_url.split('://')[1].split(':')[0]
-                    self.esp32_address = (server_ip, 10000)  # ESP32固定使用10000端口
-
-    def setup_rtp_socket(self) -> bool:
-        """设置RTP UDP套接字"""
-        try:
-            self.rtp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            self.rtp_socket.bind(('0.0.0.0', 0))  # 绑定任意可用端口
-
-            local_port = self.rtp_socket.getsockname()[1]
-            logger.info(f"RTP套接字绑定到端口: {local_port}")
-            return True
-
-        except Exception as e:
-            logger.error(f"RTP套接字设置失败: {e}")
-            return False
-
-    def setup_audio(self) -> bool:
-        """设置音频输入输出"""
-        try:
-            # 输入流（麦克风）
-            self.input_stream = self.audio.open(
-                format=pyaudio.paInt16,
-                channels=self.channels,
-                rate=self.sample_rate,
-                input=True,
-                frames_per_buffer=self.opus_frame_size
-            )
-
-            # 输出流（扬声器）
-            self.output_stream = self.audio.open(
-                format=pyaudio.paInt16,
-                channels=self.channels,
-                rate=self.sample_rate,
-                output=True,
-                frames_per_buffer=self.opus_frame_size
-            )
-
-            logger.info("音频设备初始化成功")
-            return True
-
-        except Exception as e:
-            logger.error(f"音频设备初始化失败: {e}")
-            return False
-
-    def create_rtp_packet(self, opus_data: bytes) -> bytes:
-        """创建RTP数据包"""
-        # RTP头结构: V(2)|P(1)|X(1)|CC(4)|M(1)|PT(7)|序列号(16)|时间戳(32)|SSRC(32)
-        version = 2
-        padding = 0
-        extension = 0
-        csrc_count = 0
-        marker = 0
-        payload_type = 111  # Opus
-
-        # 构建RTP头
-        byte0 = (version << 6) | (padding << 5) | (extension << 4) | csrc_count
-        byte1 = (marker << 7) | payload_type
-
-        rtp_header = struct.pack('!BBHLL',
-                                byte0, byte1,
-                                self.sequence_number,
-                                self.timestamp,
-                                self.ssrc)
-
-        # 更新序列号和时间戳
-        self.sequence_number = (self.sequence_number + 1) & 0xFFFF
-        self.timestamp = (self.timestamp + self.opus_frame_size) & 0xFFFFFFFF
-
-        return rtp_header + opus_data
-
-    def encrypt_srtp_packet(self, rtp_packet: bytes) -> bytes:
-        """使用静态密钥加密SRTP包（简化实现）"""
-        # 注意：这是一个简化的SRTP实现，生产环境应该使用专业的SRTP库
-        # 这里只是为了演示与ESP32的兼容性
-
-        # 提取master key和salt
-        master_key = self.static_srtp_key[:16]
-        master_salt = self.static_srtp_key[16:]
-
-        # 简化的AES-CM加密（实际应该使用标准SRTP实现）
-        # 这里仅做示例，实际部署请使用libsrtp
-        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-        from cryptography.hazmat.backends import default_backend
-
-        # 构建IV（简化版本）
-        iv = master_salt[:12] + b'\x00\x00\x00\x00'
-
-        # AES-CTR加密RTP载荷（跳过RTP头）
-        cipher = Cipher(algorithms.AES(master_key), modes.CTR(iv), backend=default_backend())
-        encryptor = cipher.encryptor()
-
-        rtp_header = rtp_packet[:12]
-        rtp_payload = rtp_packet[12:]
-        encrypted_payload = encryptor.update(rtp_payload) + encryptor.finalize()
-
-        # 计算HMAC认证标签（简化）
-        auth_tag = hmac.new(master_key, rtp_header + encrypted_payload, hashlib.sha1).digest()[:10]
-
-        return rtp_header + encrypted_payload + auth_tag
-
-    def send_audio_loop(self):
-        """音频发送循环"""
-        logger.info("开始音频发送循环...")
-
-        while self.running:
-            try:
-                # 从麦克风读取音频数据
-                if self.input_stream and not self.input_stream.is_stopped():
-                    audio_data = self.input_stream.read(self.opus_frame_size, exception_on_overflow=False)
-
-                    # 转换为16位整数数组
-                    audio_samples = struct.unpack(f'<{self.opus_frame_size}h', audio_data)
-
-                    # Opus编码
-                    opus_data = self.opus_encoder.encode(audio_samples, self.opus_frame_size)
-
-                    # 创建RTP包
-                    rtp_packet = self.create_rtp_packet(opus_data)
-
-                    # SRTP加密
-                    srtp_packet = self.encrypt_srtp_packet(rtp_packet)
-
-                    # 发送到ESP32
-                    if self.esp32_address and self.rtp_socket:
-                        self.rtp_socket.sendto(srtp_packet, self.esp32_address)
-
-                else:
-                    time.sleep(0.02)  # 20ms
-
-            except Exception as e:
-                logger.error(f"音频发送异常: {e}")
-                time.sleep(0.1)
-
-    def receive_audio_loop(self):
-        """音频接收循环"""
-        logger.info("开始音频接收循环...")
-
-        if not self.rtp_socket:
-            logger.error("RTP套接字未初始化")
-            return
-
-        self.rtp_socket.settimeout(1.0)  # 1秒超时
-
-        while self.running:
-            try:
-                # 接收SRTP数据包
-                data, addr = self.rtp_socket.recvfrom(1500)
-
-                if len(data) < 12:  # RTP头最小长度
-                    continue
-
-                logger.debug(f"收到来自{addr}的SRTP包: {len(data)}字节")
-
-                # 解密SRTP包（简化实现）
-                rtp_packet = self.decrypt_srtp_packet(data)
-                if not rtp_packet:
-                    continue
-
-                # 解析RTP头
-                if len(rtp_packet) < 12:
-                    continue
-
-                rtp_header = rtp_packet[:12]
-                opus_data = rtp_packet[12:]
-
-                # 解析RTP头信息
-                byte0, byte1, seq, ts, ssrc = struct.unpack('!BBHLL', rtp_header)
-                payload_type = byte1 & 0x7F
-
-                if payload_type == 111 and len(opus_data) > 0:  # Opus数据
-                    try:
-                        # Opus解码
-                        pcm_data = self.opus_decoder.decode(opus_data, self.opus_frame_size)
-
-                        # 转换为字节数组
-                        audio_bytes = struct.pack(f'<{len(pcm_data)}h', *pcm_data)
-
-                        # 播放音频
-                        if self.output_stream and not self.output_stream.is_stopped():
-                            self.output_stream.write(audio_bytes)
-
-                    except Exception as e:
-                        logger.debug(f"Opus解码失败: {e}")
-
-            except socket.timeout:
-                continue
-            except Exception as e:
-                logger.error(f"音频接收异常: {e}")
-                time.sleep(0.1)
-
-    def decrypt_srtp_packet(self, srtp_packet: bytes) -> Optional[bytes]:
-        """解密SRTP数据包（简化实现）"""
-        try:
-            if len(srtp_packet) < 22:  # RTP头+认证标签最小长度
-                return None
-
-            # 分离认证标签
-            auth_tag = srtp_packet[-10:]
-            encrypted_packet = srtp_packet[:-10]
-
-            # 验证HMAC（简化）
-            master_key = self.static_srtp_key[:16]
-            expected_tag = hmac.new(master_key, encrypted_packet, hashlib.sha1).digest()[:10]
-
-            if auth_tag != expected_tag:
-                logger.debug("SRTP认证失败")
-                return None
-
-            # 解密载荷
-            from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-            from cryptography.hazmat.backends import default_backend
-
-            master_salt = self.static_srtp_key[16:]
-            iv = master_salt[:12] + b'\x00\x00\x00\x00'
-
-            cipher = Cipher(algorithms.AES(master_key), modes.CTR(iv), backend=default_backend())
-            decryptor = cipher.decryptor()
-
-            rtp_header = encrypted_packet[:12]
-            encrypted_payload = encrypted_packet[12:]
-            decrypted_payload = decryptor.update(encrypted_payload) + decryptor.finalize()
-
-            return rtp_header + decrypted_payload
-
-        except Exception as e:
-            logger.debug(f"SRTP解密失败: {e}")
-            return None
-
-    def start(self) -> bool:
-        """启动客户端"""
-        logger.info("启动Janus Python客户端...")
-
-        # 1. 创建会话
-        if not self.create_session():
-            return False
-
-        # 2. 附加插件
-        if not self.attach_plugin():
-            return False
-
-        # 3. 发送Offer
-        if not self.send_offer():
-            return False
-
-        # 4. 设置RTP套接字
-        if not self.setup_rtp_socket():
-            return False
-
-        # 5. 设置音频设备
-        if not self.setup_audio():
-            return False
-
-        # 6. 启动音频处理线程
+        
         self.running = True
-        self.connected = True
-
-        send_thread = threading.Thread(target=self.send_audio_loop, daemon=True)
-        receive_thread = threading.Thread(target=self.receive_audio_loop, daemon=True)
-
-        send_thread.start()
-        receive_thread.start()
-
-        logger.info("Janus客户端启动成功！")
-        logger.info(f"与ESP32通信地址: {self.esp32_address}")
-        logger.info("按Ctrl+C停止...")
-
-        try:
-            while self.running:
-                time.sleep(1)
-        except KeyboardInterrupt:
-            logger.info("用户中断，正在停止...")
-            self.stop()
-
+        logger.info("Janus WebRTC客户端启动成功")
         return True
 
-    def stop(self):
-        """停止客户端"""
-        logger.info("停止Janus客户端...")
-
+    async def stop(self):
+        """停止WebRTC客户端"""
+        logger.info("停止Janus WebRTC客户端...")
+        
         self.running = False
         self.connected = False
+        
+        # 关闭WebRTC连接
+        if self.webrtc_connection:
+            await self.webrtc_connection.close()
+        
+        # 关闭信令连接
+        if self.signaling:
+            await self.signaling.close()
+        
+        logger.info("Janus WebRTC客户端已停止")
 
-        # 关闭音频流
-        if self.input_stream:
-            self.input_stream.stop_stream()
-            self.input_stream.close()
+    def get_audio_data(self):
+        """获取接收到的音频数据"""
+        if not self.audio_queue.empty():
+            return self.audio_queue.get()
+        return None
 
-        if self.output_stream:
-            self.output_stream.stop_stream()
-            self.output_stream.close()
+    def send_audio_data(self, audio_data):
+        """发送音频数据"""
+        self.response_queue.put(audio_data)
 
-        # 关闭音频系统
-        if self.audio:
-            self.audio.terminate()
+    def is_connected(self):
+        """检查连接状态"""
+        return self.connected
 
-        # 关闭RTP套接字
-        if self.rtp_socket:
-            self.rtp_socket.close()
-
-        logger.info("客户端已停止")
-
-    def _generate_transaction_id(self) -> str:
-        """生成事务ID"""
-        import random
-        import string
-        return ''.join(random.choices(string.ascii_letters + string.digits, k=12))
-
-def main():
+async def main():
     """主函数"""
     print("Janus WebRTC Python客户端")
     print("用于与ESP32-S3语音助手通信（静态SRTP版本）")
     print("-" * 50)
 
     # 创建客户端
-    client = JanusClient(
-        server_url="http://119.136.26.222:8088",
-        admin_key="janusoverlord"
+    client = JanusWebRTCClient(
+        janus_url="ws://119.136.26.222:18001/janus-protocol",
+        plugin="janus.plugin.audiobridge",
+        room_id=1234
     )
 
     # 启动客户端
-    success = client.start()
-
+    success = await client.start()
     if not success:
         print("客户端启动失败！")
         return 1
+
+    # 等待连接建立
+    while not client.is_connected():
+        await asyncio.sleep(1)
 
     return 0
 
 if __name__ == "__main__":
     import sys
-    sys.exit(main())
+    sys.exit(asyncio.run(main()))
