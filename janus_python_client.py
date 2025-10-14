@@ -20,18 +20,7 @@ pip install requests websockets pyaudio opus-python cryptography aiortc av
 import asyncio
 import json
 import logging
-import struct
-import time
-import threading
 from typing import Optional, Dict, Any
-import socket
-import hashlib
-import hmac
-import os
-
-import requests
-import pyaudio
-import opus
 import numpy as np
 from aiortc import RTCPeerConnection, RTCSessionDescription, MediaStreamTrack
 from queue import Queue
@@ -291,7 +280,7 @@ class JanusWebRTCClient:
     """
     Janus WebRTC客户端 - 支持音频流传输
     """
-    def __init__(self, janus_url: str = "ws://119.136.26.222:18001/janus-protocol", 
+    def __init__(self, janus_url: str = "ws://127.0.0.1:8001/janus-protocol", 
                  plugin: str = "janus.plugin.audiobridge",
                  room_id: int = 1234):
         self.janus_url = janus_url
