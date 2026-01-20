@@ -182,7 +182,6 @@ def base64_to_pcm(base64_audio_data, volume_gain=2.0):
                 pcm_array = librosa.resample(pcm_float, orig_sr=sample_rate, target_sr=16000, res_type='kaiser_best')
                 sample_rate = 16000
             
-            
             # 重要：将float转回int16 PCM格式
             pcm_array = np.clip(pcm_array * 32768.0, -32768, 32767).astype(np.int16)
 
